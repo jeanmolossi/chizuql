@@ -5,6 +5,17 @@ import (
 	"strings"
 )
 
+func requireDialect(ctx *buildContext, expected dialectKind, feature string) {
+	kind, ok := dialectKindOf(ctx.dialect)
+	if !ok {
+		panic(fmt.Sprintf("%s requer um dialeto reconhecido", feature))
+	}
+
+	if kind != expected {
+		panic(fmt.Sprintf("%s é suportado apenas no dialeto %s", feature, expected))
+	}
+}
+
 // Expression represents any fragment that can be embedded in SQL.
 type Expression interface {
 	build(*buildContext) string
@@ -242,13 +253,29 @@ func (m MatchBuilder) Against(query string, mode ...string) Predicate {
 	return matchAgainstExpr{columns: m.columns, mode: selectedMode, query: query}
 }
 
+// Score builds a MATCH ... AGAINST expression to be used in SELECT/ORDER BY for relevance ranking.
+func (m MatchBuilder) Score(query string, mode ...string) matchScoreExpr {
+	selectedMode := ""
+	if len(mode) > 0 {
+		selectedMode = mode[0]
+	}
+
+	return matchScoreExpr{clause: matchAgainstExpr{columns: m.columns, mode: selectedMode, query: query}}
+}
+
 type matchAgainstExpr struct {
 	columns []string
 	mode    string
 	query   string
 }
 
+type matchScoreExpr struct {
+	clause matchAgainstExpr
+}
+
 func (m matchAgainstExpr) build(ctx *buildContext) string {
+	requireDialect(ctx, dialectMySQL, "MATCH ... AGAINST")
+
 	pl := ctx.nextPlaceholder(m.query)
 	part := fmt.Sprintf("MATCH(%s) AGAINST (%s)", strings.Join(m.columns, ", "), pl)
 
@@ -258,6 +285,14 @@ func (m matchAgainstExpr) build(ctx *buildContext) string {
 
 	return part
 }
+
+func (m matchScoreExpr) build(ctx *buildContext) string { return m.clause.build(ctx) }
+
+// Asc builds an ascending ORDER BY fragment for MATCH scores.
+func (m matchScoreExpr) Asc() Expression { return orderedExpr{expr: m, order: "ASC"} }
+
+// Desc builds a descending ORDER BY fragment for MATCH scores.
+func (m matchScoreExpr) Desc() Expression { return orderedExpr{expr: m, order: "DESC"} }
 
 // TsVectorBuilder creates PostgreSQL full-text search predicates.
 type TsVectorBuilder struct {
@@ -287,6 +322,16 @@ func (t TsVectorBuilder) PlainQuery(query string) Predicate {
 	return tsQueryPredicate{builder: t, query: query, mode: "plain"}
 }
 
+// RankWebSearch builds a ts_rank expression using websearch_to_tsquery for relevance scoring.
+func (t TsVectorBuilder) RankWebSearch(query string, normalization ...int) tsRankExpr {
+	return tsRankExpr{builder: t, query: query, mode: "web", normalization: pickNormalization(normalization)}
+}
+
+// RankPlainQuery builds a ts_rank expression using plainto_tsquery for relevance scoring.
+func (t TsVectorBuilder) RankPlainQuery(query string, normalization ...int) tsRankExpr {
+	return tsRankExpr{builder: t, query: query, mode: "plain", normalization: pickNormalization(normalization)}
+}
+
 type tsQueryPredicate struct {
 	builder TsVectorBuilder
 	query   string
@@ -294,14 +339,9 @@ type tsQueryPredicate struct {
 }
 
 func (t tsQueryPredicate) build(ctx *buildContext) string {
-	pl := ctx.nextPlaceholder(t.query)
+	vector, query := t.builder.buildTsQuery(ctx, t.query, t.mode)
 
-	switch t.mode {
-	case "web":
-		return fmt.Sprintf("to_tsvector('%s', %s) @@ websearch_to_tsquery('%s', %s)", t.builder.config, t.builder.concatColumns(), t.builder.config, pl)
-	default:
-		return fmt.Sprintf("to_tsvector('%s', %s) @@ plainto_tsquery('%s', %s)", t.builder.config, t.builder.concatColumns(), t.builder.config, pl)
-	}
+	return fmt.Sprintf("%s @@ %s", vector, query)
 }
 
 func (t TsVectorBuilder) concatColumns() string {
@@ -313,4 +353,58 @@ func (t TsVectorBuilder) concatColumns() string {
 	default:
 		return fmt.Sprintf("CONCAT_WS(' ', %s)", strings.Join(t.columns, ", "))
 	}
+}
+
+func (t TsVectorBuilder) buildTsQuery(ctx *buildContext, query string, mode string) (string, string) {
+	requireDialect(ctx, dialectPostgres, "Full Text Search (tsvector)")
+
+	placeholder := ctx.nextPlaceholder(query)
+	vector := fmt.Sprintf("to_tsvector('%s', %s)", t.config, t.concatColumns())
+
+	switch mode {
+	case "web":
+		return vector, fmt.Sprintf("websearch_to_tsquery('%s', %s)", t.config, placeholder)
+	default:
+		return vector, fmt.Sprintf("plainto_tsquery('%s', %s)", t.config, placeholder)
+	}
+}
+
+type tsRankExpr struct {
+	builder       TsVectorBuilder
+	query         string
+	mode          string
+	normalization *int
+}
+
+func (t tsRankExpr) build(ctx *buildContext) string {
+	vector, query := t.builder.buildTsQuery(ctx, t.query, t.mode)
+
+	if t.normalization != nil {
+		return fmt.Sprintf("ts_rank(%s, %s, %d)", vector, query, *t.normalization)
+	}
+
+	return fmt.Sprintf("ts_rank(%s, %s)", vector, query)
+}
+
+// Asc builds an ascending ORDER BY fragment for ts_rank scores.
+func (t tsRankExpr) Asc() Expression { return orderedExpr{expr: t, order: "ASC"} }
+
+// Desc builds a descending ORDER BY fragment for ts_rank scores.
+func (t tsRankExpr) Desc() Expression { return orderedExpr{expr: t, order: "DESC"} }
+
+func pickNormalization(values []int) *int {
+	if len(values) == 0 {
+		return nil
+	}
+
+	return &values[0]
+}
+
+type orderedExpr struct {
+	expr  Expression
+	order string
+}
+
+func (o orderedExpr) build(ctx *buildContext) string {
+	return fmt.Sprintf("%s %s", o.expr.build(ctx), o.order)
 }

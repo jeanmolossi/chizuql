@@ -4,10 +4,12 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 ### Added
-- Nothing yet.
+- Builders de ranking para buscas textuais: `Match.Score` no MySQL e `TsVector.RankWebSearch/RankPlainQuery` no PostgreSQL, incluindo ordenação por relevância e normalização opcional.
+- Roadmap expandido com novos próximos passos para evolução do pacote.
 
 ### Changed
-- Nothing yet.
+- Cláusulas de busca textual agora validam o dialeto selecionado, impedindo `MATCH ... AGAINST` em PostgreSQL e `TsVector` em MySQL.
+- Documentação atualizada destacando compatibilidade de dialetos e os novos recursos de ranking.
 
 ## [v0.1.0] - 2024-06-27
 ### Added

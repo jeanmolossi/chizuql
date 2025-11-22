@@ -32,6 +32,10 @@ type sqlDialect struct {
 	kind dialectKind
 }
 
+func (d sqlDialect) Kind() dialectKind {
+	return d.kind
+}
+
 func (d sqlDialect) placeholder(i int) string {
 	switch d.kind {
 	case dialectPostgres:
@@ -39,6 +43,18 @@ func (d sqlDialect) placeholder(i int) string {
 	default:
 		return "?"
 	}
+}
+
+type dialectInspector interface {
+	Kind() dialectKind
+}
+
+func dialectKindOf(d Dialect) (dialectKind, bool) {
+	if inspected, ok := d.(dialectInspector); ok {
+		return inspected.Kind(), true
+	}
+
+	return "", false
 }
 
 var (

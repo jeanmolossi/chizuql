@@ -78,9 +78,24 @@ sql, args := del.Build()
 match := chizuql.Match("title", "body").Against("golang", "BOOLEAN MODE")
 q := chizuql.New().Select("id").From("posts").Where(match)
 
+score := chizuql.Match("title", "body").Score("golang", "BOOLEAN MODE")
+ordered := chizuql.New().
+    Select(score, "id").
+    From("posts").
+    Where(match).
+    OrderBy(score.Desc())
+
 // PostgreSQL
 fts := chizuql.TsVector("title", "body").WebSearch("golang seguro")
 pq := chizuql.New().Select("id").From("posts").Where(fts)
+
+rank := chizuql.TsVector("title", "body").RankWebSearch("golang seguro", 16)
+orderedPg := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    Select(rank, "id").
+    From("posts").
+    Where(fts).
+    OrderBy(rank.Desc())
 ```
 
 ### Raw query
@@ -100,6 +115,8 @@ sql, args := raw.Build()
 
 ## Compatibilidade
 Escolha o dialeto com `WithDialect`, que alterna automaticamente os placeholders entre `?` (MySQL) e `$n` (PostgreSQL) enquanto mantém o rastreamento de argumentos.
+
+Cláusulas de busca textual são específicas de dialeto: `MATCH ... AGAINST` só funciona com o dialeto MySQL e `TsVector`/`ts_rank` são exclusivos do dialeto PostgreSQL.
 
 Para configurar um dialeto padrão global (sem perder a capacidade de sobrescrever por query), use:
 
@@ -127,7 +144,17 @@ ci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.6.2` (mais op
 ## Roadmap
 - [x] Converter placeholders para os formatos específicos de drivers (ex.: `$1` em PostgreSQL) automaticamente.
 - [x] Adicionar suporte a `INSERT ... ON CONFLICT`/`UPSERT` com API fluente.
-- [ ] Expandir helpers de busca textual com ranking e ordenação por relevância.
+- [x] Expandir helpers de busca textual com ranking e ordenação por relevância.
+- [ ] Incluir suporte a aliases automáticos para subconsultas aninhadas.
+- [ ] Adicionar geração de SQL parametrizado para cláusulas `JSON`/`JSONB`.
+- [ ] Suportar construção de `UNION`/`UNION ALL` com controle de ordenação.
+- [ ] Permitir `WITH ORDINALITY` em CTEs e funções set-returning no PostgreSQL.
+- [ ] Introduzir API para window functions (`OVER`, partitions, frames).
+- [ ] Oferecer builders para `GROUPING SETS`/`CUBE`/`ROLLUP`.
+- [ ] Implementar suporte a `RETURNING` no MySQL 8.0+ (quando disponível) com fallback configurável.
+- [ ] Adicionar helpers para `LOCK IN SHARE MODE`/`FOR UPDATE` conforme dialeto.
+- [ ] Criar integração com contextos para cancelar build longo e medir métricas.
+- [ ] Documentar exemplos de integração com ORMs (GORM, sqlc) e migrações.
 
 ## Licença
 MIT

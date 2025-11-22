@@ -135,14 +135,56 @@ func TestFullTextSearchBuilders(t *testing.T) {
 	)
 
 	pg := New().
+		WithDialect(DialectPostgres).
 		Select("id").
 		From("posts").
 		Where(TsVector("title", "body").PlainQuery("safe go"))
 
 	assertBuild(t, pg,
-		"SELECT id FROM posts WHERE (to_tsvector('english', CONCAT_WS(' ', title, body)) @@ plainto_tsquery('english', ?))",
+		"SELECT id FROM posts WHERE (to_tsvector('english', CONCAT_WS(' ', title, body)) @@ plainto_tsquery('english', $1))",
 		[]any{"safe go"},
 	)
+}
+
+func TestFullTextRankingHelpers(t *testing.T) {
+	mysql := New().
+		Select(
+			Match("title", "body").Score("golang", "BOOLEAN MODE"),
+			"id",
+		).
+		From("posts").
+		Where(Match("title", "body").Against("golang", "BOOLEAN MODE")).
+		OrderBy(Match("title", "body").Score("golang", "BOOLEAN MODE").Desc())
+
+	assertBuild(t, mysql,
+		"SELECT MATCH(title, body) AGAINST (? IN BOOLEAN MODE), id FROM posts WHERE (MATCH(title, body) AGAINST (? IN BOOLEAN MODE)) ORDER BY MATCH(title, body) AGAINST (? IN BOOLEAN MODE) DESC",
+		[]any{"golang", "golang", "golang"},
+	)
+
+	pg := New().
+		WithDialect(DialectPostgres).
+		Select(
+			TsVector("title", "body").RankWebSearch("safe go"),
+			"id",
+		).
+		From("posts").
+		Where(TsVector("title", "body").WebSearch("safe go")).
+		OrderBy(TsVector("title", "body").RankWebSearch("safe go", 16).Desc())
+
+	assertBuild(t, pg,
+		"SELECT ts_rank(to_tsvector('english', CONCAT_WS(' ', title, body)), websearch_to_tsquery('english', $1)), id FROM posts WHERE (to_tsvector('english', CONCAT_WS(' ', title, body)) @@ websearch_to_tsquery('english', $2)) ORDER BY ts_rank(to_tsvector('english', CONCAT_WS(' ', title, body)), websearch_to_tsquery('english', $3), 16) DESC",
+		[]any{"safe go", "safe go", "safe go"},
+	)
+}
+
+func TestDialectSpecificFullTextSearchPanics(t *testing.T) {
+	assertPanicsWith(t, func() {
+		New().Select(TsVector("title").PlainQuery("oops")).From("posts").Build()
+	}, "Full Text Search (tsvector) é suportado apenas no dialeto postgres")
+
+	assertPanicsWith(t, func() {
+		New().WithDialect(DialectPostgres).Select(Match("title").Against("oops")).From("posts").Build()
+	}, "MATCH ... AGAINST é suportado apenas no dialeto mysql")
 }
 
 func TestPostgresPlaceholdersAndSubqueries(t *testing.T) {
