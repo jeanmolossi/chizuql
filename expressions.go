@@ -119,9 +119,7 @@ type subqueryExpr struct {
 }
 
 func (s subqueryExpr) build(ctx *buildContext) string {
-	sql, args := s.query.Build()
-	ctx.args = append(ctx.args, args...)
-	return fmt.Sprintf("(%s)", sql)
+	return fmt.Sprintf("(%s)", s.query.render(ctx))
 }
 
 // comparison represents a binary comparison predicate.
@@ -223,11 +221,26 @@ func Match(columns ...string) MatchBuilder { return MatchBuilder{columns: column
 
 // Against builds a MATCH ... AGAINST expression with optional mode (e.g., "BOOLEAN MODE").
 func (m MatchBuilder) Against(query string, mode ...string) Predicate {
-	part := fmt.Sprintf("MATCH(%s) AGAINST (?)", strings.Join(m.columns, ", "))
-	if len(mode) > 0 && mode[0] != "" {
-		part = fmt.Sprintf("MATCH(%s) AGAINST (? IN %s)", strings.Join(m.columns, ", "), mode[0])
+	selectedMode := ""
+	if len(mode) > 0 {
+		selectedMode = mode[0]
 	}
-	return rawExpr{sql: part, args: []any{query}}
+	return matchAgainstExpr{columns: m.columns, mode: selectedMode, query: query}
+}
+
+type matchAgainstExpr struct {
+	columns []string
+	mode    string
+	query   string
+}
+
+func (m matchAgainstExpr) build(ctx *buildContext) string {
+	pl := ctx.nextPlaceholder(m.query)
+	part := fmt.Sprintf("MATCH(%s) AGAINST (%s)", strings.Join(m.columns, ", "), pl)
+	if m.mode != "" {
+		part = fmt.Sprintf("MATCH(%s) AGAINST (%s IN %s)", strings.Join(m.columns, ", "), pl, m.mode)
+	}
+	return part
 }
 
 // TsVectorBuilder creates PostgreSQL full-text search predicates.
@@ -246,17 +259,27 @@ func (t TsVectorBuilder) WithConfig(config string) TsVectorBuilder { t.config = 
 
 // WebSearch builds a websearch_to_tsquery predicate.
 func (t TsVectorBuilder) WebSearch(query string) Predicate {
-	return rawExpr{
-		sql:  fmt.Sprintf("to_tsvector('%s', %s) @@ websearch_to_tsquery('%s', ?)", t.config, t.concatColumns(), t.config),
-		args: []any{query},
-	}
+	return tsQueryPredicate{builder: t, query: query, mode: "web"}
 }
 
 // PlainQuery builds a plainto_tsquery predicate.
 func (t TsVectorBuilder) PlainQuery(query string) Predicate {
-	return rawExpr{
-		sql:  fmt.Sprintf("to_tsvector('%s', %s) @@ plainto_tsquery('%s', ?)", t.config, t.concatColumns(), t.config),
-		args: []any{query},
+	return tsQueryPredicate{builder: t, query: query, mode: "plain"}
+}
+
+type tsQueryPredicate struct {
+	builder TsVectorBuilder
+	query   string
+	mode    string
+}
+
+func (t tsQueryPredicate) build(ctx *buildContext) string {
+	pl := ctx.nextPlaceholder(t.query)
+	switch t.mode {
+	case "web":
+		return fmt.Sprintf("to_tsvector('%s', %s) @@ websearch_to_tsquery('%s', %s)", t.builder.config, t.builder.concatColumns(), t.builder.config, pl)
+	default:
+		return fmt.Sprintf("to_tsvector('%s', %s) @@ plainto_tsquery('%s', %s)", t.builder.config, t.builder.concatColumns(), t.builder.config, pl)
 	}
 }
 

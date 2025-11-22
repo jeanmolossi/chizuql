@@ -129,3 +129,58 @@ func TestFullTextSearchBuilders(t *testing.T) {
 		[]any{"safe go"},
 	)
 }
+
+func TestPostgresPlaceholdersAndSubqueries(t *testing.T) {
+	q := New().
+		WithDialect(DialectPostgres).
+		Select("id").
+		From("users").
+		Where(
+			Col("id").In(New().WithDialect(DialectPostgres).Select("user_id").From("likes").Where(Col("kind").Eq("gopher"))),
+			Col("status").Eq("active"),
+		)
+
+	assertBuild(t, q,
+		"SELECT id FROM users WHERE (id IN (SELECT user_id FROM likes WHERE (kind = $1)) AND status = $2)",
+		[]any{"gopher", "active"},
+	)
+}
+
+func TestOnConflictMySQL(t *testing.T) {
+	q := New().
+		InsertInto("users", "email", "name").
+		Values("a@example.com", "Jane").
+		OnConflictDoUpdate(nil, Set("name", Raw("VALUES(name)")))
+
+	assertBuild(t, q,
+		"INSERT INTO users (email, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name)",
+		[]any{"a@example.com", "Jane"},
+	)
+}
+
+func TestOnConflictPostgres(t *testing.T) {
+	q := New().
+		WithDialect(DialectPostgres).
+		InsertInto("users", "email", "name").
+		Values("a@example.com", "Jane").
+		OnConflictDoUpdate([]string{"email"}, Set("name", Raw("EXCLUDED.name")), Set("updated_at", Raw("now()"))).
+		Returning("id")
+
+	assertBuild(t, q,
+		"INSERT INTO users (email, name) VALUES ($1, $2) ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, updated_at = now() RETURNING id",
+		[]any{"a@example.com", "Jane"},
+	)
+}
+
+func TestOnConflictDoNothingPostgres(t *testing.T) {
+	q := New().
+		WithDialect(DialectPostgres).
+		InsertInto("events", "id", "payload").
+		Values(1, "data").
+		OnConflictDoNothing("id")
+
+	assertBuild(t, q,
+		"INSERT INTO events (id, payload) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+		[]any{1, "data"},
+	)
+}

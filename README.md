@@ -96,16 +96,16 @@ sql, args := raw.Build()
 - Comparação entre colunas e uso de expressões cruas com `Raw`
 - Suporte a `RETURNING`
 - Builders de busca textual para MySQL (`MATCH ... AGAINST`) e PostgreSQL (`to_tsvector` + `websearch_to_tsquery` ou `plainto_tsquery`)
-- Geração de SQL parametrizado com placeholders `?`
+- Geração de SQL parametrizado com placeholders ajustados por dialeto (`?` para MySQL, `$1` para PostgreSQL)
 
 ## Compatibilidade
-O builder é agnóstico ao banco e produz placeholders `?`, compatíveis diretamente com MySQL. Para PostgreSQL, utilize a estratégia de substituir placeholders no driver ou no prepared statement conforme sua stack.
+Escolha o dialeto com `WithDialect`, que alterna automaticamente os placeholders entre `?` (MySQL) e `$n` (PostgreSQL) enquanto mantém o rastreamento de argumentos.
 
 - Desenvolvido e testado em Go ^1.25.x.
 
 ## Roadmap
-- [ ] Converter placeholders para os formatos específicos de drivers (ex.: `$1` em PostgreSQL) automaticamente.
-- [ ] Adicionar suporte a `INSERT ... ON CONFLICT`/`UPSERT` com API fluente.
+- [x] Converter placeholders para os formatos específicos de drivers (ex.: `$1` em PostgreSQL) automaticamente.
+- [x] Adicionar suporte a `INSERT ... ON CONFLICT`/`UPSERT` com API fluente.
 - [ ] Expandir helpers de busca textual com ranking e ordenação por relevância.
 
 ## Licença

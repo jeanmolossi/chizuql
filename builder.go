@@ -16,9 +16,43 @@ const (
 	queryTypeRaw    queryType = "RAW"
 )
 
+// Dialect controls placeholder rendering and certain dialect-specific clauses.
+type Dialect interface {
+	placeholder(int) string
+}
+
+type dialectKind string
+
+const (
+	dialectMySQL    dialectKind = "mysql"
+	dialectPostgres dialectKind = "postgres"
+)
+
+type sqlDialect struct {
+	kind dialectKind
+}
+
+func (d sqlDialect) placeholder(i int) string {
+	switch d.kind {
+	case dialectPostgres:
+		return fmt.Sprintf("$%d", i)
+	default:
+		return "?"
+	}
+}
+
+var (
+	// DialectMySQL renders placeholders as ?
+	DialectMySQL Dialect = sqlDialect{kind: dialectMySQL}
+	// DialectPostgres renders placeholders as $1, $2, ...
+	DialectPostgres Dialect = sqlDialect{kind: dialectPostgres}
+)
+
 // Query represents a composable SQL query built using the fluent API.
 type Query struct {
 	qType queryType
+
+	dialect Dialect
 
 	rawSQL  string
 	rawArgs []any
@@ -38,9 +72,12 @@ type Query struct {
 	limit   *int
 	offset  *int
 
-	insertTable  TableExpression
-	insertCols   []string
-	insertValues [][]Expression
+	insertTable         TableExpression
+	insertCols          []string
+	insertValues        [][]Expression
+	onConflictTarget    []string
+	onConflictSet       []SetClause
+	onConflictDoNothing bool
 
 	updateTable TableExpression
 	setClauses  []SetClause
@@ -52,12 +89,18 @@ type Query struct {
 
 // New returns a fresh Query instance ready to be composed.
 func New() *Query {
-	return &Query{}
+	return &Query{dialect: DialectMySQL}
 }
 
 // RawQuery builds a query directly from the provided SQL fragment and arguments.
 func RawQuery(sql string, args ...any) *Query {
 	return &Query{qType: queryTypeRaw, rawSQL: sql, rawArgs: args}
+}
+
+// WithDialect sets the SQL dialect for placeholder and conflict rendering.
+func (q *Query) WithDialect(d Dialect) *Query {
+	q.dialect = d
+	return q
 }
 
 // Select starts a SELECT query.
@@ -85,6 +128,21 @@ func (q *Query) InsertInto(table any, columns ...string) *Query {
 func (q *Query) Values(values ...any) *Query {
 	row := toValueExpressions(values...)
 	q.insertValues = append(q.insertValues, row)
+	return q
+}
+
+// OnConflictDoNothing adds a conflict handler that skips inserts when conflicts arise.
+func (q *Query) OnConflictDoNothing(targetColumns ...string) *Query {
+	q.onConflictTarget = targetColumns
+	q.onConflictDoNothing = true
+	return q
+}
+
+// OnConflictDoUpdate adds a conflict handler that performs an update when conflicts arise.
+func (q *Query) OnConflictDoUpdate(targetColumns []string, setClauses ...SetClause) *Query {
+	q.onConflictTarget = targetColumns
+	q.onConflictSet = setClauses
+	q.onConflictDoNothing = false
 	return q
 }
 
@@ -217,11 +275,20 @@ func (q *Query) WithRecursive(name string, subquery *Query, columns ...string) *
 
 // Build renders the SQL string and the ordered arguments slice.
 func (q *Query) Build() (string, []any) {
-	ctx := &buildContext{}
+	dialect := q.dialect
+	if dialect == nil {
+		dialect = DialectMySQL
+	}
 
+	ctx := &buildContext{dialect: dialect}
+	sql := strings.TrimSpace(q.render(ctx))
+	return sql, ctx.args
+}
+
+func (q *Query) render(ctx *buildContext) string {
 	if q.qType == queryTypeRaw {
 		ctx.args = append(ctx.args, q.rawArgs...)
-		return q.rawSQL, ctx.args
+		return q.rawSQL
 	}
 
 	sql := strings.Builder{}
@@ -240,7 +307,7 @@ func (q *Query) Build() (string, []any) {
 		panic("query type not set")
 	}
 
-	return strings.TrimSpace(sql.String()), ctx.args
+	return sql.String()
 }
 
 func (q *Query) writeCTEs(sql *strings.Builder, ctx *buildContext) {
@@ -342,7 +409,7 @@ func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
 		sql.WriteString(strings.Join(valueRows, ", "))
 	}
 
-	q.buildPredicates(sql, ctx, "WHERE", q.where)
+	q.writeOnConflict(sql, ctx)
 	q.writeReturning(sql, ctx)
 }
 
@@ -412,6 +479,47 @@ func (q *Query) writeReturning(sql *strings.Builder, ctx *buildContext) {
 	sql.WriteString(strings.Join(parts, ", "))
 }
 
+func (q *Query) writeOnConflict(sql *strings.Builder, ctx *buildContext) {
+	if len(q.onConflictSet) == 0 && !q.onConflictDoNothing {
+		return
+	}
+
+	if d, ok := ctx.dialect.(sqlDialect); ok && d.kind == dialectMySQL {
+		if len(q.onConflictSet) == 0 {
+			return
+		}
+
+		setParts := make([]string, 0, len(q.onConflictSet))
+		for _, s := range q.onConflictSet {
+			setParts = append(setParts, s.build(ctx))
+		}
+
+		sql.WriteString(" ON DUPLICATE KEY UPDATE ")
+		sql.WriteString(strings.Join(setParts, ", "))
+		return
+	}
+
+	sql.WriteString(" ON CONFLICT")
+	if len(q.onConflictTarget) > 0 {
+		sql.WriteString(" (")
+		sql.WriteString(strings.Join(q.onConflictTarget, ", "))
+		sql.WriteString(")")
+	}
+
+	if q.onConflictDoNothing {
+		sql.WriteString(" DO NOTHING")
+		return
+	}
+
+	setParts := make([]string, 0, len(q.onConflictSet))
+	for _, s := range q.onConflictSet {
+		setParts = append(setParts, s.build(ctx))
+	}
+
+	sql.WriteString(" DO UPDATE SET ")
+	sql.WriteString(strings.Join(setParts, ", "))
+}
+
 // SetClause represents a column-value assignment used in UPDATE statements.
 type SetClause struct {
 	column string
@@ -429,13 +537,17 @@ func (s SetClause) build(ctx *buildContext) string {
 
 // buildContext is used internally to collect placeholders and arguments.
 type buildContext struct {
-	args []any
+	args             []any
+	dialect          Dialect
+	placeholderIndex int
 }
 
 // nextPlaceholder appends the provided argument and returns the placeholder symbol.
 func (ctx *buildContext) nextPlaceholder(arg any) string {
+	ctx.placeholderIndex++
+	pl := ctx.dialect.placeholder(ctx.placeholderIndex)
 	ctx.args = append(ctx.args, arg)
-	return "?"
+	return pl
 }
 
 // cte represents a common table expression definition.
@@ -461,11 +573,8 @@ func (c cte) build(ctx *buildContext) string {
 	}
 
 	sb.WriteString(" AS (")
-	sql, args := c.query.Build()
-	sb.WriteString(sql)
+	sb.WriteString(c.query.render(ctx))
 	sb.WriteString(")")
-
-	ctx.args = append(ctx.args, args...)
 	return sb.String()
 }
 
@@ -514,11 +623,9 @@ func (t TableRef) build(ctx *buildContext) string {
 	sb := strings.Builder{}
 
 	if t.sub != nil {
-		sql, args := t.sub.Build()
 		sb.WriteString("(")
-		sb.WriteString(sql)
+		sb.WriteString(t.sub.render(ctx))
 		sb.WriteString(")")
-		ctx.args = append(ctx.args, args...)
 	} else {
 		sb.WriteString(t.name)
 	}
