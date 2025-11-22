@@ -1,212 +1,105 @@
 # ChizuQL
 
-ChizuQL é um fluent query builder em Go, focado em clareza, previsibilidade e compatibilidade com múltiplos bancos de dados.  
-Suporte inicial para **PostgreSQL** e **MySQL**, com uma DSL simples e composable para montar queries de forma segura e legível.
+ChizuQL é um query builder fluente para Go. Ele permite montar SQL parametrizado com clareza, incluindo seleções simples, JOINs, subqueries, CTEs (`WITH`), buscas textuais e cláusulas `RETURNING`. O foco é gerar SQL seguro com placeholders (`?`) e uma API expressiva.
 
----
-
-## 🚀 Bootstrap Rápido
-
-### 1. Requisitos
-
-- Go **1.25+**
-- Postgres ou MySQL (opcional para começar, mas recomendado para testar de verdade)
-- `git` instalado
-
-### 2. Instalando o módulo
-
-No seu projeto Go:
+## Instalação
 
 ```bash
 go get github.com/jeanmolossi/chizuql
 ```
 
-### 3. Primeiro uso (SELECT básico)
+## Uso rápido
 
-Exemplo mínimo de uso com Postgres:
-
+### SELECT básico
 ```go
-package main
-
-import (
-    "database/sql"
-    "fmt"
-    "log"
-
-    _ "github.com/lib/pq"
-
-    "github.com/jeanmolossi/chizuql"
-    "github.com/jeanmolossi/chizuql/dialect/postgres"
-)
-
-func main() {
-    db, err := sql.Open("postgres", "postgres://user:pass@localhost:5432/dbname?sslmode=disable")
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer db.Close()
-
-    // Cria um builder usando o dialeto do Postgres
-    qb := chizuql.New(postgres.Dialect{})
-
-    query := qb.
-        Select("id", "name", "status").
-        From("users").
-        Where(
-            chizuql.Col("status").Eq("active"),
-        ).
-        OrderBy("created_at DESC").
-        Limit(20)
-
-    sqlStr, args := query.Build()
-
-    fmt.Println("SQL:", sqlStr)
-    fmt.Println("Args:", args)
-
-    rows, err := db.Query(sqlStr, args...)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer rows.Close()
-
-    for rows.Next() {
-        var id int64
-        var name string
-        var status string
-
-        if err := rows.Scan(&id, &name, &status); err != nil {
-            log.Fatal(err)
-        }
-
-        fmt.Println(id, name, status)
-    }
-}
-```
-
-Exemplo de saída:
-
-```sql
-SELECT id, name, status
-FROM users
-WHERE status = $1
-ORDER BY created_at DESC
-LIMIT 20;
-
-```
-
-### 4. Usando com MySQL
-
-Exemplo mínimo com MySQL:
-
-```go
-import (
-    "database/sql"
-
-    _ "github.com/go-sql-driver/mysql"
-
-    "github.com/jeanmolossi/chizuql"
-    "github.com/jeanmolossi/chizuql/dialect/mysql"
-)
-
-func exampleMySQL(db *sql.DB) {
-    qb := chizuql.New(mysql.Dialect{})
-
-    query := qb.
-        Select("id", "email").
-        From("customers").
-        Where(
-            chizuql.Col("active").Eq(true),
-        ).
-        Limit(10)
-
-    sqlStr, args := query.Build()
-
-    // Em MySQL, os placeholders devem ser "?"
-    // Ex.: SELECT id, email FROM customers WHERE active = ? LIMIT 10;
-    rows, err := db.Query(sqlStr, args...)
-    if err != nil {
-        panic(err)
-    }
-    defer rows.Close()
-}
-
-```
-
-## Conceitos principais
-
-### Builder fluente
-
-A API do ChizuQL é baseada em encadeamento de métodos, por exemplo:
-
-```go
-q := qb.
-    Select("id", "name").
-    From("users").
+q := chizuql.New().
+    Select("id", chizuql.ColAlias("name", "nome")).
+    From(chizuql.TableAlias("users", "u")).
     Where(
-        chizuql.And(
-            chizuql.Col("status").Eq("active"),
-            chizuql.Col("created_at").Gt(chizuql.Param("2024-01-01")),
-        ),
+        chizuql.Col("status").Eq("active"),
     ).
     OrderBy("created_at DESC").
-    Limit(50).
-    Offset(100)
+    Limit(20)
 
-sqlStr, args := q.Build()
+sql, args := q.Build()
 ```
 
-### Placeholders
+### UPDATE com subquery e comparações entre colunas
+```go
+q := chizuql.New().
+    Update(chizuql.TableAlias("job.search", "s")).
+    Set(
+        chizuql.Set("updated_at", chizuql.Raw("now()")),
+    ).
+    From(
+        chizuql.New().
+            From(chizuql.TableAlias("job.reports", "r")).
+            Select("r.job_id").
+            Where(chizuql.Col("r.job_id").Eq(jobID)),
+    ).
+    Where(
+        chizuql.Col("s.job_id").Eq(jobID),
+        chizuql.Col("s.job_id").Eq(chizuql.Col("r.job_id")),
+    ).
+    Returning("s.job_id")
 
-- Postgres → $1, $2, $3, ...
-- MySQL → ?
-
-O dialeto é responsável por gerar o placeholder correto, para você não ter que ficar sofrendo com isso.
-
----
-
-## 🏗 Estrutura sugerida do projeto
-
-Estrutura inicial (pode ser ajustada depois):
-
-```txt
-chizuql/
-├── go.mod
-├── README.md
-├── internal/
-│   └── core/              # tipos internos, helpers, validações
-├── dialect/
-│   ├── postgres/          # implementação do dialeto Postgres
-│   └── mysql/             # implementação do dialeto MySQL
-├── builder/               # implementação dos builders (select, insert, etc)
-├── examples/              # exemplos completos de uso
-└── tests/                 # testes unitários e de integração
+sql, args := q.Build()
 ```
 
-🧪 Rodando os testes
+### INSERT com múltiplas linhas e RETURNING
+```go
+insert := chizuql.New().
+    InsertInto("users", "name", "email").
+    Values("Jane", "jane@example.com").
+    Values("John", "john@example.com").
+    Returning("id")
 
-Após clonar o repositório:
-
-```bash
-git clone https://github.com/jeanmolossi/chizuql.git
-cd chizuql
-
-make tests
+sql, args := insert.Build()
 ```
 
-Se você tiver containers de banco para testes de integração, algo como:
+### DELETE com CTE
+```go
+cte := chizuql.New().
+    Select("id").
+    From("sessions").
+    Where(chizuql.Col("expires_at").Lt(chizuql.Raw("now()")))
 
-```bash
-make integration-tests
+del := chizuql.New().
+    With("expired", cte).
+    DeleteFrom("sessions").
+    Where(chizuql.Col("id").In(chizuql.New().Select("id").From("expired")))
+
+sql, args := del.Build()
 ```
 
-## 🧭 Roadmap inicial
+### Buscas textuais
+```go
+// MySQL
+match := chizuql.Match("title", "body").Against("golang", "BOOLEAN MODE")
+q := chizuql.New().Select("id").From("posts").Where(match)
 
-- [ ] SELECT, INSERT, UPDATE, DELETE básicos
-- [ ] Suporte completo a WHERE com AND/OR/IN/LIKE
-- [ ] JOINs (INNER, LEFT, RIGHT)
-- [ ] Subqueries
-- [ ] Builder de CTEs (WITH ...)
-- [ ] Modo “raw fragment” controlado (para escapes intencionais)
-- [ ] Testes de integração com Postgres
-- [ ] Testes de integração com MySQL
-- [ ] Benchmarks de alocação e performance
+// PostgreSQL
+fts := chizuql.TsVector("title", "body").WebSearch("golang seguro")
+pq := chizuql.New().Select("id").From("posts").Where(fts)
+```
+
+### Raw query
+```go
+raw := chizuql.RawQuery("SELECT now()")
+sql, args := raw.Build()
+```
+
+## Recursos principais
+- SELECT, INSERT, UPDATE, DELETE com cláusulas fluentes
+- JOINs, subqueries e CTEs (`WITH` e `WITH RECURSIVE`)
+- Predicados compostos (`AND`/`OR`), `IN`, `BETWEEN`, `LIKE`, `IS NULL`
+- Comparação entre colunas e uso de expressões cruas com `Raw`
+- Suporte a `RETURNING`
+- Builders de busca textual para MySQL (`MATCH ... AGAINST`) e PostgreSQL (`to_tsvector` + `websearch_to_tsquery` ou `plainto_tsquery`)
+- Geração de SQL parametrizado com placeholders `?`
+
+## Compatibilidade
+O builder é agnóstico ao banco e produz placeholders `?`, compatíveis diretamente com MySQL. Para PostgreSQL, utilize a estratégia de substituir placeholders no driver ou no prepared statement conforme sua stack.
+
+## Licença
+MIT
