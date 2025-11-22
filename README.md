@@ -101,5 +101,12 @@ sql, args := raw.Build()
 ## Compatibilidade
 O builder é agnóstico ao banco e produz placeholders `?`, compatíveis diretamente com MySQL. Para PostgreSQL, utilize a estratégia de substituir placeholders no driver ou no prepared statement conforme sua stack.
 
+- Desenvolvido e testado em Go ^1.25.x.
+
+## Roadmap
+- [ ] Converter placeholders para os formatos específicos de drivers (ex.: `$1` em PostgreSQL) automaticamente.
+- [ ] Adicionar suporte a `INSERT ... ON CONFLICT`/`UPSERT` com API fluente.
+- [ ] Expandir helpers de busca textual com ranking e ordenação por relevância.
+
 ## Licença
 MIT

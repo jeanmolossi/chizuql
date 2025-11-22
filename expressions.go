@@ -39,22 +39,22 @@ func (c Column) build(ctx *buildContext) string {
 }
 
 func (c Column) Eq(value any) Predicate {
-	return comparison{left: c, op: "=", right: toExpression(value)}
+	return comparison{left: c, op: "=", right: toValueExpression(value)}
 }
 func (c Column) Ne(value any) Predicate {
-	return comparison{left: c, op: "<>", right: toExpression(value)}
+	return comparison{left: c, op: "<>", right: toValueExpression(value)}
 }
 func (c Column) Gt(value any) Predicate {
-	return comparison{left: c, op: ">", right: toExpression(value)}
+	return comparison{left: c, op: ">", right: toValueExpression(value)}
 }
 func (c Column) Gte(value any) Predicate {
-	return comparison{left: c, op: ">=", right: toExpression(value)}
+	return comparison{left: c, op: ">=", right: toValueExpression(value)}
 }
 func (c Column) Lt(value any) Predicate {
-	return comparison{left: c, op: "<", right: toExpression(value)}
+	return comparison{left: c, op: "<", right: toValueExpression(value)}
 }
 func (c Column) Lte(value any) Predicate {
-	return comparison{left: c, op: "<=", right: toExpression(value)}
+	return comparison{left: c, op: "<=", right: toValueExpression(value)}
 }
 
 // In builds an IN predicate. Values can be literals or a subquery.
@@ -65,18 +65,18 @@ func (c Column) In(values ...any) Predicate {
 		}
 	}
 
-	exprs := toExpressions(values...)
+	exprs := toValueExpressions(values...)
 	return inPredicate{left: c, list: exprs}
 }
 
 // Between builds a BETWEEN predicate.
 func (c Column) Between(start, end any) Predicate {
-	return betweenPredicate{left: c, start: toExpression(start), end: toExpression(end)}
+	return betweenPredicate{left: c, start: toValueExpression(start), end: toValueExpression(end)}
 }
 
 // Like builds a LIKE predicate.
 func (c Column) Like(value any) Predicate {
-	return comparison{left: c, op: "LIKE", right: toExpression(value)}
+	return comparison{left: c, op: "LIKE", right: toValueExpression(value)}
 }
 
 // IsNull builds an IS NULL predicate.

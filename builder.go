@@ -63,7 +63,7 @@ func RawQuery(sql string, args ...any) *Query {
 // Select starts a SELECT query.
 func (q *Query) Select(columns ...any) *Query {
 	q.qType = queryTypeSelect
-	q.selectColumns = append(q.selectColumns, toExpressions(columns...)...)
+	q.selectColumns = append(q.selectColumns, toSQLExpressions(columns...)...)
 	return q
 }
 
@@ -83,7 +83,7 @@ func (q *Query) InsertInto(table any, columns ...string) *Query {
 
 // Values appends a values list for an INSERT query.
 func (q *Query) Values(values ...any) *Query {
-	row := toExpressions(values...)
+	row := toValueExpressions(values...)
 	q.insertValues = append(q.insertValues, row)
 	return q
 }
@@ -175,13 +175,13 @@ func (q *Query) Having(predicates ...Predicate) *Query {
 
 // GroupBy adds GROUP BY expressions.
 func (q *Query) GroupBy(expressions ...any) *Query {
-	q.groupBy = append(q.groupBy, toExpressions(expressions...)...)
+	q.groupBy = append(q.groupBy, toSQLExpressions(expressions...)...)
 	return q
 }
 
 // OrderBy appends ORDER BY expressions.
 func (q *Query) OrderBy(expressions ...any) *Query {
-	q.orderBy = append(q.orderBy, toExpressions(expressions...)...)
+	q.orderBy = append(q.orderBy, toSQLExpressions(expressions...)...)
 	return q
 }
 
@@ -199,7 +199,7 @@ func (q *Query) Offset(offset int) *Query {
 
 // Returning adds RETURNING expressions for INSERT/UPDATE/DELETE queries.
 func (q *Query) Returning(expressions ...any) *Query {
-	q.returning = append(q.returning, toExpressions(expressions...)...)
+	q.returning = append(q.returning, toSQLExpressions(expressions...)...)
 	return q
 }
 
@@ -420,7 +420,7 @@ type SetClause struct {
 
 // Set defines a column assignment for UPDATE queries.
 func Set(column string, value any) SetClause {
-	return SetClause{column: column, value: toExpression(value)}
+	return SetClause{column: column, value: toValueExpression(value)}
 }
 
 func (s SetClause) build(ctx *buildContext) string {
@@ -545,7 +545,7 @@ func toTableExpression(value any) TableExpression {
 }
 
 // toExpression converts common Go types into an Expression.
-func toExpression(value any) Expression {
+func toValueExpression(value any) Expression {
 	switch v := value.(type) {
 	case Expression:
 		return v
@@ -558,10 +558,27 @@ func toExpression(value any) Expression {
 	}
 }
 
-func toExpressions(values ...any) []Expression {
+func toValueExpressions(values ...any) []Expression {
 	out := make([]Expression, 0, len(values))
 	for _, v := range values {
-		out = append(out, toExpression(v))
+		out = append(out, toValueExpression(v))
+	}
+	return out
+}
+
+func toSQLExpression(value any) Expression {
+	switch v := value.(type) {
+	case string:
+		return rawExpr{sql: v}
+	default:
+		return toValueExpression(v)
+	}
+}
+
+func toSQLExpressions(values ...any) []Expression {
+	out := make([]Expression, 0, len(values))
+	for _, v := range values {
+		out = append(out, toSQLExpression(v))
 	}
 	return out
 }
