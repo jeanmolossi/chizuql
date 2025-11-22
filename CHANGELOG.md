@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file. The format 
 - Configuração do `.golangci.yml` com linters obrigatórios e documentação de como rodá-los.
 - Instruções de contribuição reforçando testes, lint e atualização do changelog.
 
+### Changed
+- Ajuste no gerenciamento de CTEs recursivas para emitir apenas um `WITH RECURSIVE` por declaração, evitando SQL inválido.
+- `RETURNING` agora falha imediatamente em consultas `SELECT` e `UPDATE` sem cláusulas `SET`.
+- Predicados `IN` passam a rejeitar listas vazias com panic explícito, inclusive quando construídos diretamente.
+- Atualização das instruções de Go/lint para alinhar versões (Go 1.25, golangci-lint 2.6.2+ com `--fix`).
+
 ## [0.2.0] - 2024-06-26
 ### Added
 - Alternância de dialetos MySQL/PostgreSQL com placeholders adequados via `WithDialect`.

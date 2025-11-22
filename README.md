@@ -113,10 +113,14 @@ sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("i
 // SELECT id FROM users WHERE (id = ?) | args: [10]
 ```
 
-- Desenvolvido e testado em Go ^1.25.x.
+- Desenvolvido e testado em Go 1.25.
 
 ## Contribuindo e releases
-- Execute sempre `go test ./...` e `golangci-lint run ./...` antes de abrir um PR ou publicar uma release.
+- Execute sempre `go test ./...` e `golangci-lint run --fix ./...` (versão 2.6.2 ou superior) antes de abrir um PR ou publicar
+  uma release.
+- Para instalar o lint em outros ambientes ou CI, utilize o script oficial: `curl -sSfL https://raw.githubusercontent.com/golang
+ci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.6.2` (mais opções em https://golangci-lint.run/docs/welcome
+/install/#other-ci).
 - Atualize o `CHANGELOG.md` seguindo o modelo do Keep a Changelog: registre alterações em "Unreleased" e mova-as para uma nova seção versionada (`vX.Y.Z`) quando criar uma tag.
 - Adotamos versionamento semântico. Para novas releases, garanta que testes e lint passaram, que a documentação foi atualizada e que a tag `vX.Y.Z` foi criada.
 

@@ -105,6 +105,19 @@ func TestDeleteWithCTE(t *testing.T) {
 	)
 }
 
+func TestMixedRecursiveCTEs(t *testing.T) {
+	q := New().
+		With("base", New().Select("id").From("users")).
+		WithRecursive("tree", New().Select("id").From("nodes")).
+		Select("id").
+		From("base")
+
+	assertBuild(t, q,
+		"WITH RECURSIVE base AS (SELECT id FROM users), tree AS (SELECT id FROM nodes) SELECT id FROM base",
+		nil,
+	)
+}
+
 func TestRawQuery(t *testing.T) {
 	q := RawQuery("SELECT now()")
 	assertBuild(t, q, "SELECT now()", nil)
@@ -215,4 +228,50 @@ func TestDefaultDialectSwitching(t *testing.T) {
 		"SELECT id FROM users WHERE (id = ?)",
 		[]any{2},
 	)
+}
+
+func TestReturningPanicsOnSelect(t *testing.T) {
+	assertPanicsWith(t, func() {
+		New().Select("id").Returning("id")
+	}, "RETURNING is not supported on SELECT queries")
+}
+
+func TestUpdateWithoutSetPanics(t *testing.T) {
+	assertPanicsWith(t, func() {
+		New().Update("users").Build()
+	}, "UPDATE requires at least one SET clause")
+}
+
+func TestEmptyInListPanics(t *testing.T) {
+	assertPanicsWith(t, func() {
+		Col("id").In()
+	}, "IN list cannot be empty")
+
+	assertPanicsWith(t, func() {
+		inPredicate{left: Col("id"), list: nil}.build(&buildContext{dialect: DialectMySQL})
+	}, "IN list cannot be empty")
+}
+
+func assertPanicsWith(t *testing.T, fn func(), msg string) {
+	t.Helper()
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatalf("expected panic with message %q", msg)
+		}
+
+		got, ok := r.(string)
+		if !ok {
+			t.Fatalf("panic is not a string: %#v", r)
+
+			return
+		}
+
+		if got != msg {
+			t.Fatalf("unexpected panic message. want %q got %q", msg, got)
+		}
+	}()
+
+	fn()
 }

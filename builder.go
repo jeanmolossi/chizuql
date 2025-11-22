@@ -297,6 +297,14 @@ func (q *Query) Offset(offset int) *Query {
 
 // Returning adds RETURNING expressions for INSERT/UPDATE/DELETE queries.
 func (q *Query) Returning(expressions ...any) *Query {
+	switch q.qType {
+	case queryTypeSelect:
+		panic("RETURNING is not supported on SELECT queries")
+	case queryTypeInsert, queryTypeUpdate, queryTypeDelete:
+	case queryTypeRaw, "":
+		panic("RETURNING requer uma query INSERT, UPDATE ou DELETE")
+	}
+
 	q.returning = append(q.returning, toSQLExpressions(expressions...)...)
 
 	return q
@@ -361,6 +369,20 @@ func (q *Query) writeCTEs(sql *strings.Builder, ctx *buildContext) {
 	}
 
 	sql.WriteString("WITH ")
+
+	hasRecursive := false
+
+	for _, c := range q.ctes {
+		if c.recursive {
+			hasRecursive = true
+
+			break
+		}
+	}
+
+	if hasRecursive {
+		sql.WriteString("RECURSIVE ")
+	}
 
 	parts := make([]string, 0, len(q.ctes))
 	for _, c := range q.ctes {
@@ -432,8 +454,6 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
 	if q.offset != nil {
 		fmt.Fprintf(sql, " OFFSET %d", *q.offset)
 	}
-
-	q.writeReturning(sql, ctx)
 }
 
 func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
@@ -471,7 +491,7 @@ func (q *Query) buildUpdate(sql *strings.Builder, ctx *buildContext) {
 	sql.WriteString(q.updateTable.build(ctx))
 
 	if len(q.setClauses) == 0 {
-		return
+		panic("UPDATE requires at least one SET clause")
 	}
 
 	setParts := make([]string, 0, len(q.setClauses))
@@ -619,10 +639,6 @@ type cte struct {
 
 func (c cte) build(ctx *buildContext) string {
 	sb := strings.Builder{}
-
-	if c.recursive {
-		sb.WriteString("RECURSIVE ")
-	}
 
 	sb.WriteString(c.name)
 

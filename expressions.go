@@ -60,6 +60,10 @@ func (c Column) Lte(value any) Predicate {
 
 // In builds an IN predicate. Values can be literals or a subquery.
 func (c Column) In(values ...any) Predicate {
+	if len(values) == 0 {
+		panic("IN list cannot be empty")
+	}
+
 	if len(values) == 1 {
 		if sub, ok := values[0].(*Query); ok {
 			return comparison{left: c, op: "IN", right: subqueryExpr{query: sub}}
@@ -143,6 +147,10 @@ type inPredicate struct {
 }
 
 func (i inPredicate) build(ctx *buildContext) string {
+	if len(i.list) == 0 {
+		panic("IN list cannot be empty")
+	}
+
 	parts := make([]string, 0, len(i.list))
 	for _, item := range i.list {
 		parts = append(parts, item.build(ctx))
