@@ -2,8 +2,8 @@ package chizuql
 
 import (
 	"fmt"
-	"sort"
 	"strings"
+	"sync"
 )
 
 type queryType string
@@ -46,7 +46,26 @@ var (
 	DialectMySQL Dialect = sqlDialect{kind: dialectMySQL}
 	// DialectPostgres renders placeholders as $1, $2, ...
 	DialectPostgres Dialect = sqlDialect{kind: dialectPostgres}
+
+	defaultDialect   Dialect = DialectMySQL
+	defaultDialectMu sync.RWMutex
 )
+
+// SetDefaultDialect replaces the package-wide default dialect used by newly created queries.
+func SetDefaultDialect(d Dialect) {
+	defaultDialectMu.Lock()
+	defer defaultDialectMu.Unlock()
+
+	defaultDialect = d
+}
+
+// DefaultDialect returns the package-wide default dialect.
+func DefaultDialect() Dialect {
+	defaultDialectMu.RLock()
+	defer defaultDialectMu.RUnlock()
+
+	return defaultDialect
+}
 
 // Query represents a composable SQL query built using the fluent API.
 type Query struct {
@@ -89,7 +108,7 @@ type Query struct {
 
 // New returns a fresh Query instance ready to be composed.
 func New() *Query {
-	return &Query{dialect: DialectMySQL}
+	return &Query{dialect: DefaultDialect()}
 }
 
 // RawQuery builds a query directly from the provided SQL fragment and arguments.
@@ -100,6 +119,7 @@ func RawQuery(sql string, args ...any) *Query {
 // WithDialect sets the SQL dialect for placeholder and conflict rendering.
 func (q *Query) WithDialect(d Dialect) *Query {
 	q.dialect = d
+
 	return q
 }
 
@@ -107,12 +127,14 @@ func (q *Query) WithDialect(d Dialect) *Query {
 func (q *Query) Select(columns ...any) *Query {
 	q.qType = queryTypeSelect
 	q.selectColumns = append(q.selectColumns, toSQLExpressions(columns...)...)
+
 	return q
 }
 
 // Distinct marks the SELECT query as DISTINCT.
 func (q *Query) Distinct() *Query {
 	q.distinct = true
+
 	return q
 }
 
@@ -121,6 +143,7 @@ func (q *Query) InsertInto(table any, columns ...string) *Query {
 	q.qType = queryTypeInsert
 	q.insertTable = toTableExpression(table)
 	q.insertCols = append(q.insertCols, columns...)
+
 	return q
 }
 
@@ -128,6 +151,7 @@ func (q *Query) InsertInto(table any, columns ...string) *Query {
 func (q *Query) Values(values ...any) *Query {
 	row := toValueExpressions(values...)
 	q.insertValues = append(q.insertValues, row)
+
 	return q
 }
 
@@ -135,6 +159,7 @@ func (q *Query) Values(values ...any) *Query {
 func (q *Query) OnConflictDoNothing(targetColumns ...string) *Query {
 	q.onConflictTarget = targetColumns
 	q.onConflictDoNothing = true
+
 	return q
 }
 
@@ -143,6 +168,7 @@ func (q *Query) OnConflictDoUpdate(targetColumns []string, setClauses ...SetClau
 	q.onConflictTarget = targetColumns
 	q.onConflictSet = setClauses
 	q.onConflictDoNothing = false
+
 	return q
 }
 
@@ -150,6 +176,7 @@ func (q *Query) OnConflictDoUpdate(targetColumns []string, setClauses ...SetClau
 func (q *Query) Update(table any) *Query {
 	q.qType = queryTypeUpdate
 	q.updateTable = toTableExpression(table)
+
 	return q
 }
 
@@ -157,18 +184,21 @@ func (q *Query) Update(table any) *Query {
 func (q *Query) DeleteFrom(table any) *Query {
 	q.qType = queryTypeDelete
 	q.deleteTable = toTableExpression(table)
+
 	return q
 }
 
 // Set adds SET clauses for UPDATE queries.
 func (q *Query) Set(clauses ...SetClause) *Query {
 	q.setClauses = append(q.setClauses, clauses...)
+
 	return q
 }
 
 // From sets the FROM clause.
 func (q *Query) From(table any) *Query {
 	q.from = toTableExpression(table)
+
 	return q
 }
 
@@ -197,7 +227,9 @@ func (q *Query) join(kind string, table any, on ...Predicate) *Query {
 	if len(on) > 0 {
 		clause.on = And(on...)
 	}
+
 	q.joins = append(q.joins, clause)
+
 	return q
 }
 
@@ -209,10 +241,12 @@ func (q *Query) Where(predicates ...Predicate) *Query {
 
 	if q.where == nil {
 		q.where = And(predicates...)
+
 		return q
 	}
 
 	q.where = And(q.where, And(predicates...))
+
 	return q
 }
 
@@ -224,52 +258,61 @@ func (q *Query) Having(predicates ...Predicate) *Query {
 
 	if q.having == nil {
 		q.having = And(predicates...)
+
 		return q
 	}
 
 	q.having = And(q.having, And(predicates...))
+
 	return q
 }
 
 // GroupBy adds GROUP BY expressions.
 func (q *Query) GroupBy(expressions ...any) *Query {
 	q.groupBy = append(q.groupBy, toSQLExpressions(expressions...)...)
+
 	return q
 }
 
 // OrderBy appends ORDER BY expressions.
 func (q *Query) OrderBy(expressions ...any) *Query {
 	q.orderBy = append(q.orderBy, toSQLExpressions(expressions...)...)
+
 	return q
 }
 
 // Limit sets a LIMIT clause.
 func (q *Query) Limit(limit int) *Query {
 	q.limit = &limit
+
 	return q
 }
 
 // Offset sets an OFFSET clause.
 func (q *Query) Offset(offset int) *Query {
 	q.offset = &offset
+
 	return q
 }
 
 // Returning adds RETURNING expressions for INSERT/UPDATE/DELETE queries.
 func (q *Query) Returning(expressions ...any) *Query {
 	q.returning = append(q.returning, toSQLExpressions(expressions...)...)
+
 	return q
 }
 
 // With adds a common table expression (CTE).
 func (q *Query) With(name string, subquery *Query, columns ...string) *Query {
 	q.ctes = append(q.ctes, cte{name: name, query: subquery, columns: columns})
+
 	return q
 }
 
 // WithRecursive adds a recursive CTE.
 func (q *Query) WithRecursive(name string, subquery *Query, columns ...string) *Query {
 	q.ctes = append(q.ctes, cte{name: name, query: subquery, columns: columns, recursive: true})
+
 	return q
 }
 
@@ -277,17 +320,19 @@ func (q *Query) WithRecursive(name string, subquery *Query, columns ...string) *
 func (q *Query) Build() (string, []any) {
 	dialect := q.dialect
 	if dialect == nil {
-		dialect = DialectMySQL
+		dialect = DefaultDialect()
 	}
 
 	ctx := &buildContext{dialect: dialect}
 	sql := strings.TrimSpace(q.render(ctx))
+
 	return sql, ctx.args
 }
 
 func (q *Query) render(ctx *buildContext) string {
 	if q.qType == queryTypeRaw {
 		ctx.args = append(ctx.args, q.rawArgs...)
+
 		return q.rawSQL
 	}
 
@@ -328,18 +373,22 @@ func (q *Query) writeCTEs(sql *strings.Builder, ctx *buildContext) {
 
 func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
 	sql.WriteString("SELECT ")
+
 	if q.distinct {
 		sql.WriteString("DISTINCT ")
 	}
 
 	columns := "*"
+
 	if len(q.selectColumns) > 0 {
 		colParts := make([]string, 0, len(q.selectColumns))
 		for _, c := range q.selectColumns {
 			colParts = append(colParts, c.build(ctx))
 		}
+
 		columns = strings.Join(colParts, ", ")
 	}
+
 	sql.WriteString(columns)
 
 	if q.from != nil {
@@ -359,6 +408,7 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
 		for _, g := range q.groupBy {
 			parts = append(parts, g.build(ctx))
 		}
+
 		sql.WriteString(" GROUP BY ")
 		sql.WriteString(strings.Join(parts, ", "))
 	}
@@ -370,16 +420,17 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
 		for _, o := range q.orderBy {
 			parts = append(parts, o.build(ctx))
 		}
+
 		sql.WriteString(" ORDER BY ")
 		sql.WriteString(strings.Join(parts, ", "))
 	}
 
 	if q.limit != nil {
-		sql.WriteString(fmt.Sprintf(" LIMIT %d", *q.limit))
+		fmt.Fprintf(sql, " LIMIT %d", *q.limit)
 	}
 
 	if q.offset != nil {
-		sql.WriteString(fmt.Sprintf(" OFFSET %d", *q.offset))
+		fmt.Fprintf(sql, " OFFSET %d", *q.offset)
 	}
 
 	q.writeReturning(sql, ctx)
@@ -396,11 +447,13 @@ func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
 	}
 
 	valueRows := make([]string, 0, len(q.insertValues))
+
 	for _, row := range q.insertValues {
 		parts := make([]string, 0, len(row))
 		for _, v := range row {
 			parts = append(parts, v.build(ctx))
 		}
+
 		valueRows = append(valueRows, fmt.Sprintf("(%s)", strings.Join(parts, ", ")))
 	}
 
@@ -455,10 +508,12 @@ func (q *Query) buildPredicates(sql *strings.Builder, ctx *buildContext, keyword
 	if pred == nil {
 		return
 	}
+
 	clause := pred.build(ctx)
 	if clause == "" {
 		return
 	}
+
 	sql.WriteString(" ")
 	sql.WriteString(keyword)
 	sql.WriteString(" ")
@@ -496,10 +551,12 @@ func (q *Query) writeOnConflict(sql *strings.Builder, ctx *buildContext) {
 
 		sql.WriteString(" ON DUPLICATE KEY UPDATE ")
 		sql.WriteString(strings.Join(setParts, ", "))
+
 		return
 	}
 
 	sql.WriteString(" ON CONFLICT")
+
 	if len(q.onConflictTarget) > 0 {
 		sql.WriteString(" (")
 		sql.WriteString(strings.Join(q.onConflictTarget, ", "))
@@ -508,6 +565,7 @@ func (q *Query) writeOnConflict(sql *strings.Builder, ctx *buildContext) {
 
 	if q.onConflictDoNothing {
 		sql.WriteString(" DO NOTHING")
+
 		return
 	}
 
@@ -547,6 +605,7 @@ func (ctx *buildContext) nextPlaceholder(arg any) string {
 	ctx.placeholderIndex++
 	pl := ctx.dialect.placeholder(ctx.placeholderIndex)
 	ctx.args = append(ctx.args, arg)
+
 	return pl
 }
 
@@ -566,6 +625,7 @@ func (c cte) build(ctx *buildContext) string {
 	}
 
 	sb.WriteString(c.name)
+
 	if len(c.columns) > 0 {
 		sb.WriteString(" (")
 		sb.WriteString(strings.Join(c.columns, ", "))
@@ -575,6 +635,7 @@ func (c cte) build(ctx *buildContext) string {
 	sb.WriteString(" AS (")
 	sb.WriteString(c.query.render(ctx))
 	sb.WriteString(")")
+
 	return sb.String()
 }
 
@@ -590,10 +651,12 @@ func (j joinClause) build(ctx *buildContext) string {
 	sb.WriteString(j.kind)
 	sb.WriteString(" ")
 	sb.WriteString(j.table.build(ctx))
+
 	if j.on != nil {
 		sb.WriteString(" ON ")
 		sb.WriteString(j.on.build(ctx))
 	}
+
 	return sb.String()
 }
 
@@ -670,6 +733,7 @@ func toValueExpressions(values ...any) []Expression {
 	for _, v := range values {
 		out = append(out, toValueExpression(v))
 	}
+
 	return out
 }
 
@@ -687,12 +751,6 @@ func toSQLExpressions(values ...any) []Expression {
 	for _, v := range values {
 		out = append(out, toSQLExpression(v))
 	}
-	return out
-}
 
-// SortArgs sorts arguments to make tests deterministic. Useful for text search helpers.
-func sortArgs(args []string) []string {
-	clone := append([]string(nil), args...)
-	sort.Strings(clone)
-	return clone
+	return out
 }

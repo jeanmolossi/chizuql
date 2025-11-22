@@ -101,7 +101,24 @@ sql, args := raw.Build()
 ## Compatibilidade
 Escolha o dialeto com `WithDialect`, que alterna automaticamente os placeholders entre `?` (MySQL) e `$n` (PostgreSQL) enquanto mantém o rastreamento de argumentos.
 
+Para configurar um dialeto padrão global (sem perder a capacidade de sobrescrever por query), use:
+
+```go
+chizuql.SetDefaultDialect(chizuql.DialectPostgres)
+
+sql, args := chizuql.New().Select("id").From("users").Where(chizuql.Col("id").Eq(10)).Build()
+// SELECT id FROM users WHERE (id = $1) | args: [10]
+
+sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("id").From("users").Where(chizuql.Col("id").Eq(10)).Build()
+// SELECT id FROM users WHERE (id = ?) | args: [10]
+```
+
 - Desenvolvido e testado em Go ^1.25.x.
+
+## Contribuindo e releases
+- Execute sempre `go test ./...` e `golangci-lint run ./...` antes de abrir um PR ou publicar uma release.
+- Atualize o `CHANGELOG.md` seguindo o modelo do Keep a Changelog: registre alterações em "Unreleased" e mova-as para uma nova seção versionada (`vX.Y.Z`) quando criar uma tag.
+- Adotamos versionamento semântico. Para novas releases, garanta que testes e lint passaram, que a documentação foi atualizada e que a tag `vX.Y.Z` foi criada.
 
 ## Roadmap
 - [x] Converter placeholders para os formatos específicos de drivers (ex.: `$1` em PostgreSQL) automaticamente.

@@ -35,6 +35,7 @@ func (c Column) build(ctx *buildContext) string {
 	if c.alias != "" {
 		return fmt.Sprintf("%s AS %s", c.name, c.alias)
 	}
+
 	return c.name
 }
 
@@ -66,6 +67,7 @@ func (c Column) In(values ...any) Predicate {
 	}
 
 	exprs := toValueExpressions(values...)
+
 	return inPredicate{left: c, list: exprs}
 }
 
@@ -110,6 +112,7 @@ func Raw(sql string, args ...any) Expression {
 
 func (r rawExpr) build(ctx *buildContext) string {
 	ctx.args = append(ctx.args, r.args...)
+
 	return r.sql
 }
 
@@ -144,6 +147,7 @@ func (i inPredicate) build(ctx *buildContext) string {
 	for _, item := range i.list {
 		parts = append(parts, item.build(ctx))
 	}
+
 	return fmt.Sprintf("%s IN (%s)", i.left.build(ctx), strings.Join(parts, ", "))
 }
 
@@ -180,6 +184,7 @@ func (c compoundPredicate) build(ctx *buildContext) string {
 	}
 
 	fragments := make([]string, 0, len(c.parts))
+
 	for _, p := range c.parts {
 		fragment := p.build(ctx)
 		if fragment != "" {
@@ -225,6 +230,7 @@ func (m MatchBuilder) Against(query string, mode ...string) Predicate {
 	if len(mode) > 0 {
 		selectedMode = mode[0]
 	}
+
 	return matchAgainstExpr{columns: m.columns, mode: selectedMode, query: query}
 }
 
@@ -237,9 +243,11 @@ type matchAgainstExpr struct {
 func (m matchAgainstExpr) build(ctx *buildContext) string {
 	pl := ctx.nextPlaceholder(m.query)
 	part := fmt.Sprintf("MATCH(%s) AGAINST (%s)", strings.Join(m.columns, ", "), pl)
+
 	if m.mode != "" {
 		part = fmt.Sprintf("MATCH(%s) AGAINST (%s IN %s)", strings.Join(m.columns, ", "), pl, m.mode)
 	}
+
 	return part
 }
 
@@ -255,7 +263,11 @@ func TsVector(columns ...string) TsVectorBuilder {
 }
 
 // WithConfig overrides the text search configuration.
-func (t TsVectorBuilder) WithConfig(config string) TsVectorBuilder { t.config = config; return t }
+func (t TsVectorBuilder) WithConfig(config string) TsVectorBuilder {
+	t.config = config
+
+	return t
+}
 
 // WebSearch builds a websearch_to_tsquery predicate.
 func (t TsVectorBuilder) WebSearch(query string) Predicate {
@@ -275,6 +287,7 @@ type tsQueryPredicate struct {
 
 func (t tsQueryPredicate) build(ctx *buildContext) string {
 	pl := ctx.nextPlaceholder(t.query)
+
 	switch t.mode {
 	case "web":
 		return fmt.Sprintf("to_tsvector('%s', %s) @@ websearch_to_tsquery('%s', %s)", t.builder.config, t.builder.concatColumns(), t.builder.config, pl)

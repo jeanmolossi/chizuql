@@ -9,9 +9,11 @@ func assertBuild(t *testing.T, q *Query, wantSQL string, wantArgs []any) {
 	t.Helper()
 
 	gotSQL, gotArgs := q.Build()
+
 	if gotSQL != wantSQL {
 		t.Fatalf("unexpected SQL.\nwant: %s\n got: %s", wantSQL, gotSQL)
 	}
+
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("unexpected args.\nwant: %#v\n got: %#v", wantArgs, gotArgs)
 	}
@@ -182,5 +184,35 @@ func TestOnConflictDoNothingPostgres(t *testing.T) {
 	assertBuild(t, q,
 		"INSERT INTO events (id, payload) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
 		[]any{1, "data"},
+	)
+}
+
+func TestDefaultDialectSwitching(t *testing.T) {
+	prev := DefaultDialect()
+
+	SetDefaultDialect(DialectPostgres)
+	t.Cleanup(func() {
+		SetDefaultDialect(prev)
+	})
+
+	q := New().
+		Select("id").
+		From("users").
+		Where(Col("id").Eq(1))
+
+	assertBuild(t, q,
+		"SELECT id FROM users WHERE (id = $1)",
+		[]any{1},
+	)
+
+	qMySQL := New().
+		WithDialect(DialectMySQL).
+		Select("id").
+		From("users").
+		Where(Col("id").Eq(2))
+
+	assertBuild(t, qMySQL,
+		"SELECT id FROM users WHERE (id = ?)",
+		[]any{2},
 	)
 }
