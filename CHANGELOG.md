@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
+- Nothing yet.
+
+### Changed
+- Nothing yet.
+
+## [v0.4.0] - 2025-11-23
+
+### Added
 - Suporte a optimizer hints/planner hints com comentários `/*+ ... */` filtrados por dialeto e testes cobrindo MySQL/PostgreSQL.
 - Documentação expandida com exemplos de integração (GORM, sqlc e migrações) e uso de hints no README e em `examples/`.
 
