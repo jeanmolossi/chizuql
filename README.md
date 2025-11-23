@@ -296,6 +296,97 @@ sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("i
 
 - Desenvolvido e testado em Go 1.25.
 
+## Hints de otimizador específicos por dialeto
+Use `OptimizerHints` para injetar comentários `/*+ ... */` logo após o verbo (SELECT/INSERT/UPDATE/DELETE), filtrando por dialeto quando necessário:
+
+```go
+q := chizuql.New().
+    Select("id").
+    From("users").
+    OptimizerHints(
+        chizuql.OptimizerHint("MAX_EXECUTION_TIME(500)"), // aplicado a todos os dialetos
+        chizuql.MySQLHint("INDEX(users idx_users_status)"), // somente MySQL
+        chizuql.PostgresHint("SeqScan(users) OFF"),         // somente PostgreSQL
+    )
+
+sql, _ := q.Build()
+// SELECT /*+ MAX_EXECUTION_TIME(500) INDEX(users idx_users_status) */ id FROM users
+
+sqlPg, _ := q.WithDialect(chizuql.DialectPostgres).Build()
+// SELECT /*+ SeqScan(users) OFF */ id FROM users
+```
+
+## Integração com ORMs (GORM, sqlc) e migrações
+### GORM
+```go
+type User struct {
+    ID   int64
+    Name string
+}
+
+q := chizuql.New().
+    Select("id", "name").
+    From("users").
+    Where(chizuql.Col("status").Eq("active")).
+    OptimizerHints(chizuql.MySQLHint("INDEX(users idx_users_status)"))
+
+sqlStr, args := q.Build()
+
+var users []User
+if err := db.Raw(sqlStr, args...).Scan(&users).Error; err != nil {
+    return err
+}
+```
+- `OptimizerHints` funciona com o dialeto configurado na conexão do GORM; os argumentos retornados pelo builder são repassados diretamente ao método `Raw`.
+
+### sqlc
+```go
+ctx := context.Background()
+q := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    Select("id", "email").
+    From("users").
+    Where(chizuql.Col("id").In(1, 2, 3))
+
+sqlStr, args := q.Build()
+rows, err := db.QueryContext(ctx, sqlStr, args...)
+if err != nil {
+    return err
+}
+defer rows.Close()
+
+for rows.Next() {
+    var id int64
+    var email string
+    if err := rows.Scan(&id, &email); err != nil {
+        return err
+    }
+    // envie os dados para seu código gerado pelo sqlc
+}
+```
+- Utilize `WithDialect` para alinhar os placeholders com o banco configurado no sqlc; o slice de `args` se encaixa diretamente nos métodos `QueryContext`/`ExecContext`.
+
+### Migrações
+```go
+// Exemplo de migração com goose/hcl/atlas usando uma query gerada
+migration := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    RawQuery("ALTER TABLE users ADD COLUMN metadata JSONB DEFAULT '{}'::jsonb")
+
+sqlStr, args := migration.Build()
+if len(args) != 0 {
+    return fmt.Errorf("migration expected zero args, got %d", len(args))
+}
+
+// Execute via o driver padrão usado pelo seu runner de migração
+if _, err := db.ExecContext(ctx, sqlStr); err != nil {
+    return err
+}
+```
+- Para migrações declarativas que exigem SQL estático, `RawQuery` ajuda a compartilhar snippets consistentes (inclusive para rollback) mantendo a mesma estratégia de placeholders.
+
+- Desenvolvido e testado em Go 1.25.
+
 ## Contribuindo e releases
 - Verifique o ambiente antes de qualquer alteração: `go version` deve reportar Go 1.25.x e `golangci-lint --version` deve apontar para a versão 2.6.2 ou superior no PATH em uso.
 - Utilize Go 1.25 e não altere a toolchain ou versões de linting salvo solicitação explícita.
@@ -322,8 +413,8 @@ sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("i
 - [x] Implementar suporte a `RETURNING` no MySQL 8.0+ (quando disponível) com fallback configurável.
 - [x] Adicionar helpers para `LOCK IN SHARE MODE`/`FOR UPDATE` conforme dialeto.
 - [x] Criar integração com contextos para cancelar build longo e medir métricas.
-- [ ] Documentar exemplos de integração com ORMs (GORM, sqlc) e migrações.
-- [ ] Suportar optimizer hints/hints de planner específicos por dialeto.
+- [x] Documentar exemplos de integração com ORMs (GORM, sqlc) e migrações.
+- [x] Suportar optimizer hints/hints de planner específicos por dialeto.
 - [ ] Oferecer helpers para paginação por cursor (keyset pagination) na API fluente.
 - [ ] Adicionar builders para `INTERSECT`/`EXCEPT` com ordenação e paginação em nível de conjunto.
 - [ ] Expor builders para `LATERAL JOIN`/`CROSS APPLY` onde suportados.

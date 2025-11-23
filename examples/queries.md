@@ -523,3 +523,81 @@ tempo: 50.12µs
 - `BuildContext` retorna métricas do render (duração e contagem de argumentos) e aceita cancelamento por contexto.
 - Para cancelar rapidamente builds longos, passe um contexto com deadline ou cancelamento antecipado.
 - O método `Build` tradicional permanece disponível para chamadas simples sem contexto.
+
+### 18. Optimizer hints específicos por dialeto
+**Query (MySQL)**
+```go
+q := chizuql.New().
+    Select("id").
+    From("users").
+    OptimizerHints(
+        chizuql.OptimizerHint("MAX_EXECUTION_TIME(500)"),
+        chizuql.MySQLHint("INDEX(users idx_users_status)"),
+        chizuql.PostgresHint("SeqScan(users) OFF"),
+    )
+
+sql, args := q.Build()
+```
+
+**Saída gerada (MySQL)**
+```
+SELECT /*+ MAX_EXECUTION_TIME(500) INDEX(users idx_users_status) */ id FROM users
+args: []
+```
+
+**Query (PostgreSQL)**
+```go
+pg := q.WithDialect(chizuql.DialectPostgres)
+
+sqlPg, argsPg := pg.Build()
+```
+
+**Saída gerada (PostgreSQL)**
+```
+SELECT /*+ SeqScan(users) OFF */ id FROM users
+args: []
+```
+
+**Comentários**
+- `OptimizerHints` injeta comentários `/*+ ... */` logo após o verbo da query.
+- Hints restritos a um dialeto são ignorados automaticamente quando o dialeto atual não corresponde.
+
+### 19. Integração com GORM, sqlc e migrações
+**Query (builder + GORM)**
+```go
+q := chizuql.New().
+    Select("id", "name").
+    From("users").
+    Where(chizuql.Col("status").Eq("active")).
+    OptimizerHints(chizuql.MySQLHint("INDEX(users idx_users_status)"))
+
+sql, args := q.Build()
+var users []User
+err := db.Raw(sql, args...).Scan(&users).Error
+```
+
+**Query (builder + sqlc)**
+```go
+pg := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    Select("id", "email").
+    From("users").
+    Where(chizuql.Col("id").In(1, 2))
+
+sqlPg, argsPg := pg.Build()
+rows, err := db.QueryContext(ctx, sqlPg, argsPg...)
+```
+
+**Query (migração direta)**
+```go
+migration := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    RawQuery("ALTER TABLE users ADD COLUMN metadata JSONB DEFAULT '{}'::jsonb")
+
+sqlMig, argsMig := migration.Build()
+_, err := db.ExecContext(ctx, sqlMig, argsMig...)
+```
+
+**Comentários**
+- A saída do builder (`sql` + `args`) pode ser repassada diretamente a `db.Raw` do GORM ou aos métodos `QueryContext`/`ExecContext` usados pelo sqlc.
+- Para migrações estáticas, `RawQuery` permite compartilhar comandos validados (inclusive para rollback) com a mesma convenção de placeholders do projeto.

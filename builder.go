@@ -52,6 +52,48 @@ type lockClause struct {
 	mode lockMode
 }
 
+// PlannerHint represents an optimizer/planner hint that may be restricted to specific dialects.
+type PlannerHint struct {
+	sql      string
+	dialects map[dialectKind]struct{}
+}
+
+// OptimizerHint creates a new hint, optionally restricted to specific dialects.
+//
+// When no dialects are provided, the hint is emitted for all dialects. Unknown dialects are ignored.
+func OptimizerHint(sql string, dialects ...Dialect) PlannerHint {
+	accepted := make(map[dialectKind]struct{})
+
+	for _, d := range dialects {
+		if kind, ok := dialectKindOf(d); ok {
+			accepted[kind] = struct{}{}
+		}
+	}
+
+	return PlannerHint{sql: strings.TrimSpace(sql), dialects: accepted}
+}
+
+// MySQLHint creates a hint that is only rendered for the MySQL dialect.
+func MySQLHint(sql string) PlannerHint { return OptimizerHint(sql, DialectMySQL) }
+
+// PostgresHint creates a hint that is only rendered for the PostgreSQL dialect.
+func PostgresHint(sql string) PlannerHint { return OptimizerHint(sql, DialectPostgres) }
+
+func (h PlannerHint) applies(d Dialect) bool {
+	if len(h.dialects) == 0 {
+		return h.sql != ""
+	}
+
+	kind, ok := dialectKindOf(d)
+	if !ok {
+		return false
+	}
+
+	_, allowed := h.dialects[kind]
+
+	return allowed && h.sql != ""
+}
+
 type sqlDialect struct {
 	kind dialectKind
 }
@@ -171,6 +213,8 @@ type Query struct {
 	returning []Expression
 
 	lock lockClause
+
+	optimizerHints []PlannerHint
 }
 
 // BuildReport captures metrics from query rendering.
@@ -203,6 +247,16 @@ func (q *Query) WithDialect(d Dialect) *Query {
 // WithMySQLReturningMode configures how RETURNING is rendered when using the MySQL dialect.
 func (q *Query) WithMySQLReturningMode(mode MySQLReturningMode) *Query {
 	q.mysqlReturningMode = mode
+
+	return q
+}
+
+// OptimizerHints attaches optimizer or planner hints to the query.
+//
+// The hints are rendered as dialect-aware `/*+ ... */` comments immediately after
+// the query verb (SELECT/INSERT/UPDATE/DELETE) when applicable.
+func (q *Query) OptimizerHints(hints ...PlannerHint) *Query {
+	q.optimizerHints = append(q.optimizerHints, hints...)
 
 	return q
 }
@@ -578,6 +632,8 @@ func (q *Query) writeCTEs(sql *strings.Builder, ctx *buildContext) {
 func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext, includeOrdering bool) {
 	sql.WriteString("SELECT ")
 
+	q.writeOptimizerHints(sql, ctx)
+
 	if q.distinct {
 		sql.WriteString("DISTINCT ")
 	}
@@ -709,6 +765,28 @@ func (q *Query) appendLock(sql *strings.Builder, ctx *buildContext) {
 	}
 }
 
+func (q *Query) writeOptimizerHints(sql *strings.Builder, ctx *buildContext) {
+	if len(q.optimizerHints) == 0 {
+		return
+	}
+
+	applicable := make([]string, 0, len(q.optimizerHints))
+
+	for _, hint := range q.optimizerHints {
+		if hint.applies(ctx.dialect) {
+			applicable = append(applicable, hint.sql)
+		}
+	}
+
+	if len(applicable) == 0 {
+		return
+	}
+
+	sql.WriteString("/*+ ")
+	sql.WriteString(strings.Join(applicable, " "))
+	sql.WriteString(" */ ")
+}
+
 func (q *Query) ensureLockable() {
 	if q.qType != queryTypeSelect {
 		panic("row-level locks estão disponíveis apenas para consultas SELECT")
@@ -720,7 +798,11 @@ func (q *Query) ensureLockable() {
 }
 
 func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
-	sql.WriteString("INSERT INTO ")
+	sql.WriteString("INSERT ")
+
+	q.writeOptimizerHints(sql, ctx)
+
+	sql.WriteString("INTO ")
 	sql.WriteString(q.insertTable.build(ctx))
 
 	if len(q.insertCols) > 0 {
@@ -751,6 +833,9 @@ func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
 
 func (q *Query) buildUpdate(sql *strings.Builder, ctx *buildContext) {
 	sql.WriteString("UPDATE ")
+
+	q.writeOptimizerHints(sql, ctx)
+
 	sql.WriteString(q.updateTable.build(ctx))
 
 	if len(q.setClauses) == 0 {
@@ -780,7 +865,11 @@ func (q *Query) buildUpdate(sql *strings.Builder, ctx *buildContext) {
 }
 
 func (q *Query) buildDelete(sql *strings.Builder, ctx *buildContext) {
-	sql.WriteString("DELETE FROM ")
+	sql.WriteString("DELETE ")
+
+	q.writeOptimizerHints(sql, ctx)
+
+	sql.WriteString("FROM ")
 	sql.WriteString(q.deleteTable.build(ctx))
 
 	q.buildPredicates(sql, ctx, "WHERE", q.where)
