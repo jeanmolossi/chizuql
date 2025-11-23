@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
+- Nada até o momento.
+
+### Changed
+- Nada até o momento.
+
+### Fixed
+- Nada até o momento.
+
+## [v0.5.0] - 2025-11-23
+
+### Added
 - Helpers de paginação por cursor (`KeysetAfter`/`KeysetBefore`) reutilizando as ordenações configuradas na query.
 - Métodos fluentes no builder para aplicar keyset pagination diretamente a partir do `ORDER BY`.
 - Exemplo prático de paginação por cursor em `examples/queries.md`.
