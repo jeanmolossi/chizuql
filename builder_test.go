@@ -116,6 +116,37 @@ func TestRowLevelLocks(t *testing.T) {
 	assertBuild(t, lockPg, "SELECT id FROM users FOR UPDATE", nil)
 }
 
+func TestOptimizerHints(t *testing.T) {
+	q := New().
+		Select("id").
+		From("users").
+		OptimizerHints(
+			OptimizerHint("MAX_EXECUTION_TIME(500)"),
+			MySQLHint("INDEX(users idx_users_status)"),
+			PostgresHint("SeqScan(users) OFF"),
+		)
+
+	assertBuild(t, q,
+		"SELECT /*+ MAX_EXECUTION_TIME(500) INDEX(users idx_users_status) */ id FROM users",
+		nil,
+	)
+
+	pg := New().
+		WithDialect(DialectPostgres).
+		Select("id").
+		From("users").
+		OptimizerHints(
+			OptimizerHint("Parallel(2)"),
+			PostgresHint("SeqScan(users) OFF"),
+			MySQLHint("NO_ICP(users)"),
+		)
+
+	assertBuild(t, pg,
+		"SELECT /*+ Parallel(2) SeqScan(users) OFF */ id FROM users",
+		nil,
+	)
+}
+
 func TestRowLevelLockPanics(t *testing.T) {
 	t.Parallel()
 
