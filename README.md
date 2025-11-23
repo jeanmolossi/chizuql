@@ -225,8 +225,8 @@ sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("i
 - [x] Incluir suporte a aliases automáticos para subconsultas aninhadas.
 - [x] Adicionar geração de SQL parametrizado para cláusulas `JSON`/`JSONB`.
 - [x] Suportar construção de `UNION`/`UNION ALL` com controle de ordenação.
-- [ ] Permitir `WITH ORDINALITY` em CTEs e funções set-returning no PostgreSQL.
-- [ ] Introduzir API para window functions (`OVER`, partitions, frames).
+- [x] Permitir `WITH ORDINALITY` em CTEs e funções set-returning no PostgreSQL.
+- [x] Introduzir API para window functions (`OVER`, partitions, frames).
 - [ ] Oferecer builders para `GROUPING SETS`/`CUBE`/`ROLLUP`.
 - [ ] Implementar suporte a `RETURNING` no MySQL 8.0+ (quando disponível) com fallback configurável.
 - [ ] Adicionar helpers para `LOCK IN SHARE MODE`/`FOR UPDATE` conforme dialeto.
@@ -235,6 +235,8 @@ sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("i
 - [ ] Suportar optimizer hints/hints de planner específicos por dialeto.
 - [ ] Oferecer helpers para paginação por cursor (keyset pagination) na API fluente.
 - [ ] Adicionar builders para `INTERSECT`/`EXCEPT` com ordenação e paginação em nível de conjunto.
+- [ ] Expor builders para `LATERAL JOIN`/`CROSS APPLY` onde suportados.
+- [ ] Oferecer API para `MERGE`/`INSERT ... ON DUPLICATE KEY` com estratégias portáveis.
 
 ## Licença
 MIT

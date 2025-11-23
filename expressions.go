@@ -122,6 +122,12 @@ func (c Column) Like(value any) Predicate {
 	return comparison{left: c, op: "LIKE", right: toValueExpression(value)}
 }
 
+// Asc builds an ascending ORDER BY fragment for columns.
+func (c Column) Asc() Expression { return orderedExpr{expr: c, order: "ASC"} }
+
+// Desc builds a descending ORDER BY fragment for columns.
+func (c Column) Desc() Expression { return orderedExpr{expr: c, order: "DESC"} }
+
 // IsNull builds an IS NULL predicate.
 func (c Column) IsNull() Predicate { return unaryPredicate{left: c, keyword: "IS NULL"} }
 
@@ -430,6 +436,143 @@ func pickNormalization(values []int) *int {
 	}
 
 	return &values[0]
+}
+
+// FunctionExpr builds an arbitrary SQL function call.
+type FunctionExpr struct {
+	name string
+	args []Expression
+}
+
+// Func creates a function call expression using SQL identifiers and expressions as arguments.
+func Func(name string, args ...any) FunctionExpr {
+	return FunctionExpr{name: name, args: toSQLExpressions(args...)}
+}
+
+// Over wraps the function in a window specification.
+func (f FunctionExpr) Over(spec WindowSpec) Expression {
+	return windowExpr{expr: f, spec: spec}
+}
+
+func (f FunctionExpr) build(ctx *buildContext) string {
+	params := make([]string, 0, len(f.args))
+	for _, a := range f.args {
+		params = append(params, a.build(ctx))
+	}
+
+	return fmt.Sprintf("%s(%s)", f.name, strings.Join(params, ", "))
+}
+
+// WindowSpec describes PARTITION/ORDER/FRAME clauses for OVER().
+type WindowSpec struct {
+	partitionBy []Expression
+	orderBy     []Expression
+	frame       *WindowFrame
+}
+
+// Window initializes an empty window specification.
+func Window() WindowSpec { return WindowSpec{} }
+
+// PartitionBy sets partitioning expressions for the window.
+func (w WindowSpec) PartitionBy(expressions ...any) WindowSpec {
+	w.partitionBy = append(w.partitionBy, toSQLExpressions(expressions...)...)
+
+	return w
+}
+
+// OrderBy sets ordering expressions for the window.
+func (w WindowSpec) OrderBy(expressions ...any) WindowSpec {
+	w.orderBy = append(w.orderBy, toSQLExpressions(expressions...)...)
+
+	return w
+}
+
+// RowsBetween defines a ROWS frame with start/end bounds.
+func (w WindowSpec) RowsBetween(start, end FrameBound) WindowSpec {
+	w.frame = &WindowFrame{mode: "ROWS", start: start, end: end}
+
+	return w
+}
+
+// RangeBetween defines a RANGE frame with start/end bounds.
+func (w WindowSpec) RangeBetween(start, end FrameBound) WindowSpec {
+	w.frame = &WindowFrame{mode: "RANGE", start: start, end: end}
+
+	return w
+}
+
+func (w WindowSpec) build(ctx *buildContext) string {
+	parts := make([]string, 0, 3)
+
+	if len(w.partitionBy) > 0 {
+		partitions := make([]string, 0, len(w.partitionBy))
+		for _, p := range w.partitionBy {
+			partitions = append(partitions, p.build(ctx))
+		}
+
+		parts = append(parts, fmt.Sprintf("PARTITION BY %s", strings.Join(partitions, ", ")))
+	}
+
+	if len(w.orderBy) > 0 {
+		ordering := make([]string, 0, len(w.orderBy))
+		for _, o := range w.orderBy {
+			ordering = append(ordering, o.build(ctx))
+		}
+
+		parts = append(parts, fmt.Sprintf("ORDER BY %s", strings.Join(ordering, ", ")))
+	}
+
+	if w.frame != nil {
+		parts = append(parts, w.frame.build())
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// FrameBound represents a bound clause inside a window frame.
+type FrameBound struct{ sql string }
+
+// WindowFrame describes frame mode and boundaries.
+type WindowFrame struct {
+	mode  string
+	start FrameBound
+	end   FrameBound
+}
+
+func (f WindowFrame) build() string {
+	return fmt.Sprintf("%s BETWEEN %s AND %s", f.mode, f.start.sql, f.end.sql)
+}
+
+// UnboundedPreceding renders UNBOUNDED PRECEDING.
+func UnboundedPreceding() FrameBound { return FrameBound{sql: "UNBOUNDED PRECEDING"} }
+
+// UnboundedFollowing renders UNBOUNDED FOLLOWING.
+func UnboundedFollowing() FrameBound { return FrameBound{sql: "UNBOUNDED FOLLOWING"} }
+
+// CurrentRow renders CURRENT ROW.
+func CurrentRow() FrameBound { return FrameBound{sql: "CURRENT ROW"} }
+
+// Preceding renders an N PRECEDING bound.
+func Preceding(n int) FrameBound { return FrameBound{sql: fmt.Sprintf("%d PRECEDING", n)} }
+
+// Following renders an N FOLLOWING bound.
+func Following(n int) FrameBound { return FrameBound{sql: fmt.Sprintf("%d FOLLOWING", n)} }
+
+// Over wraps any expression with a window specification.
+func Over(expr Expression, spec WindowSpec) Expression { return windowExpr{expr: expr, spec: spec} }
+
+type windowExpr struct {
+	expr Expression
+	spec WindowSpec
+}
+
+func (w windowExpr) build(ctx *buildContext) string {
+	specSQL := strings.TrimSpace(w.spec.build(ctx))
+	if specSQL == "" {
+		return fmt.Sprintf("%s OVER ()", w.expr.build(ctx))
+	}
+
+	return fmt.Sprintf("%s OVER (%s)", w.expr.build(ctx), specSQL)
 }
 
 // JSONExtract builds a dialect-aware JSON/JSONB extractor using parameterized paths.

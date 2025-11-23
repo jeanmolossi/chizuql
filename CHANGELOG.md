@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 - Coletânea de consultas em `examples/` com código do query builder, saída gerada e notas de uso para MySQL e PostgreSQL.
+- Builder para `WITH ORDINALITY` em funções set-returning do PostgreSQL via `WithOrdinality` e `FuncTable`.
+- API de window functions (`Func(...).Over`, `Window`, frames `ROWS/RANGE`, `PartitionBy`/`OrderBy`) com novos helpers de limites de frame.
+- Exemplos extras cobrindo window functions, `WITH ORDINALITY`, ordenação por colunas (`Asc`/`Desc`) e variações adicionais de consultas.
+- Diretriz explícita no `AGENTS.md` exigindo que novas features venham acompanhadas de exemplos em `examples/`.
 
 ### Changed
 

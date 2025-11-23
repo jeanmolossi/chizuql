@@ -818,6 +818,11 @@ type TableExpression interface {
 	build(*buildContext) string
 }
 
+// WithOrdinality wraps a table or set-returning function with WITH ORDINALITY (PostgreSQL only).
+func WithOrdinality(table any, alias string, columns ...string) TableExpression {
+	return ordinalityTable{source: toTableExpression(table), alias: alias, columns: columns}
+}
+
 // TableRef references a table, optionally with alias or derived subquery.
 type TableRef struct {
 	name  string
@@ -854,6 +859,75 @@ func (t TableRef) build(ctx *buildContext) string {
 	if alias != "" {
 		sb.WriteString(" AS ")
 		sb.WriteString(alias)
+	}
+
+	return sb.String()
+}
+
+// FuncTable renders a set-returning function to be used in FROM/JOIN.
+type functionTable struct {
+	name    string
+	args    []Expression
+	alias   string
+	columns []string
+}
+
+// FuncTable creates a set-returning function call (e.g., unnest, generate_series).
+func FuncTable(name string, args ...any) functionTable {
+	return functionTable{name: name, args: toSQLExpressions(args...)}
+}
+
+// Alias sets an alias (and optional column names) for the function table.
+func (f functionTable) Alias(alias string, columns ...string) functionTable {
+	f.alias = alias
+	f.columns = columns
+
+	return f
+}
+
+func (f functionTable) build(ctx *buildContext) string {
+	params := make([]string, 0, len(f.args))
+	for _, a := range f.args {
+		params = append(params, a.build(ctx))
+	}
+
+	base := fmt.Sprintf("%s(%s)", f.name, strings.Join(params, ", "))
+
+	if f.alias == "" {
+		return base
+	}
+
+	alias := fmt.Sprintf("%s AS %s", base, f.alias)
+
+	if len(f.columns) > 0 {
+		alias = fmt.Sprintf("%s (%s)", alias, strings.Join(f.columns, ", "))
+	}
+
+	return alias
+}
+
+type ordinalityTable struct {
+	source  TableExpression
+	alias   string
+	columns []string
+}
+
+func (o ordinalityTable) build(ctx *buildContext) string {
+	requireDialect(ctx, dialectPostgres, "WITH ORDINALITY")
+
+	sb := strings.Builder{}
+	sb.WriteString(o.source.build(ctx))
+	sb.WriteString(" WITH ORDINALITY")
+
+	if o.alias != "" {
+		sb.WriteString(" AS ")
+		sb.WriteString(o.alias)
+
+		if len(o.columns) > 0 {
+			sb.WriteString(" (")
+			sb.WriteString(strings.Join(o.columns, ", "))
+			sb.WriteString(")")
+		}
 	}
 
 	return sb.String()

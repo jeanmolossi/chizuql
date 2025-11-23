@@ -245,6 +245,42 @@ func TestPostgresPlaceholdersAndSubqueries(t *testing.T) {
 	)
 }
 
+func TestWithOrdinalityOnFunctionTable(t *testing.T) {
+	q := New().
+		WithDialect(DialectPostgres).
+		Select("tags.tag_value", "tags.ord").
+		From(TableAlias("users", "u")).
+		Join(
+			WithOrdinality(FuncTable("unnest", Col("u.tags")), "tags", "tag_value", "ord"),
+			Col("tags.tag_value").Eq("go"),
+		)
+
+	assertBuild(t, q,
+		"SELECT tags.tag_value, tags.ord FROM users AS u JOIN unnest(u.tags) WITH ORDINALITY AS tags (tag_value, ord) ON (tags.tag_value = $1)",
+		[]any{"go"},
+	)
+}
+
+func TestWindowFunctions(t *testing.T) {
+	spec := Window().
+		PartitionBy(Col("department_id")).
+		OrderBy(Col("salary").Desc()).
+		RowsBetween(UnboundedPreceding(), CurrentRow())
+
+	q := New().
+		Select(
+			Func("row_number").Over(spec),
+			Func("sum", Col("salary")).Over(spec),
+			"employee_id",
+		).
+		From("employees")
+
+	assertBuild(t, q,
+		"SELECT row_number() OVER (PARTITION BY department_id ORDER BY salary DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), sum(salary) OVER (PARTITION BY department_id ORDER BY salary DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), employee_id FROM employees",
+		nil,
+	)
+}
+
 func TestAutomaticSubqueryAliases(t *testing.T) {
 	q := New().
 		Select("subq_1.user_id").

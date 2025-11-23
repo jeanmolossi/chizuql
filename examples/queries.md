@@ -298,3 +298,65 @@ args: ["$.title" "$.author" "{\"published\":true}"]
 **Comentários**
 - A mesma API gera SQL compatível com ambos dialetos, alterando apenas os placeholders e funções nativas.
 - `JSONContains` converte o JSON para `jsonb` em PostgreSQL e usa `JSON_CONTAINS` em MySQL.
+
+### 11. Expansão de arrays com `WITH ORDINALITY` (PostgreSQL)
+**Query**
+```go
+q := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    Select("u.id", "tags.tag_value", "tags.ord").
+    From(chizuql.TableAlias("users", "u")).
+    Join(
+        chizuql.WithOrdinality(
+            chizuql.FuncTable("unnest", chizuql.Col("u.tags")),
+            "tags",
+            "tag_value",
+            "ord",
+        ),
+        chizuql.Col("tags.tag_value").Eq("go"),
+    ).
+    OrderBy(chizuql.Col("tags.ord").Asc())
+
+sql, args := q.Build()
+```
+
+**Saída gerada**
+```
+SELECT u.id, tags.tag_value, tags.ord FROM users AS u JOIN unnest(u.tags) WITH ORDINALITY AS tags (tag_value, ord) ON (tags.tag_value = $1) ORDER BY tags.ord ASC
+args: ["go"]
+```
+
+**Comentários**
+- `FuncTable("unnest", ...)` cria uma função set-returning segura para usar em `FROM`/`JOIN`.
+- `WithOrdinality` só está disponível para PostgreSQL; a coluna adicional de ordem recebe o nome informado na lista de colunas.
+- `Asc`/`Desc` em colunas permitem expressar ordenação sem cair em `Raw`.
+
+### 12. Window functions com partição e frame
+**Query**
+```go
+spec := chizuql.Window().
+    PartitionBy(chizuql.Col("department_id")).
+    OrderBy(chizuql.Col("salary").Desc()).
+    RowsBetween(chizuql.UnboundedPreceding(), chizuql.CurrentRow())
+
+q := chizuql.New().
+    Select(
+        chizuql.Func("row_number").Over(spec),
+        chizuql.Func("sum", chizuql.Col("salary")).Over(spec),
+        "employee_id",
+    ).
+    From("employees")
+
+sql, args := q.Build()
+```
+
+**Saída gerada**
+```
+SELECT row_number() OVER (PARTITION BY department_id ORDER BY salary DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), sum(salary) OVER (PARTITION BY department_id ORDER BY salary DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), employee_id FROM employees
+args: []
+```
+
+**Comentários**
+- `Window()` compõe `PARTITION BY`, `ORDER BY` e frames `ROWS`/`RANGE` de forma declarativa.
+- `Func(...).Over(spec)` funciona para qualquer função agregada ou analítica, incluindo aliases ou expressões mais complexas.
+- Frames aceitam limites como `UnboundedPreceding`, `CurrentRow`, `Preceding(n)` e `Following(n)` para personalizar janelas.
