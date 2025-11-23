@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
+- Coletânea de consultas em `examples/` com código do query builder, saída gerada e notas de uso para MySQL e PostgreSQL.
 
 ### Changed
 
