@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 - Configuração do `.golangci.yml` realinhada com o schema oficial, mantendo `wsl_v5` e `issues` restritos às propriedades suportadas.
+- Campo `version` em `.golangci.yml` ajustado para usar string conforme o schema do `golangci-lint`.
 
 ## [v0.5.0] - 2025-11-23
 
