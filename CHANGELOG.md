@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
+- Nada por enquanto.
+
+### Changed
+- Nada por enquanto.
+
+## [v0.3.0] - 2025-11-23
+### Added
 - Coletânea de consultas em `examples/` com código do query builder, saída gerada e notas de uso para MySQL e PostgreSQL.
 - Builder para `WITH ORDINALITY` em funções set-returning do PostgreSQL via `WithOrdinality` e `FuncTable`.
 - API de window functions (`Func(...).Over`, `Window`, frames `ROWS/RANGE`, `PartitionBy`/`OrderBy`) com novos helpers de limites de frame.
@@ -14,9 +21,11 @@ All notable changes to this project will be documented in this file. The format 
 - Builders de agrupamento `GroupingSets`, `GroupSet`, `Rollup` e `Cube` para `GROUP BY` avançado.
 - Configuração `WithMySQLReturningMode` com modo de fallback (`MySQLReturningOmit`) para omitir `RETURNING` em MySQL antigos.
 - Exemplos adicionais cobrindo BETWEEN, grouping sets, rollup/cube e uso de `RETURNING` condicionado em MySQL.
+- Helpers de lock de linha `ForUpdate` e `LockInShareMode`, adaptando a sintaxe conforme o dialeto.
+- `BuildContext` para renderização cancelável com métricas de duração e contagem de argumentos, com exemplos dedicados.
 
 ### Changed
-- Roadmap atualizado com as duas próximas tarefas concluídas (GROUPING SETS e RETURNING no MySQL) mantendo pendências abertas.
+- Roadmap atualizado com tarefas concluídas (GROUPING SETS, RETURNING no MySQL, locks de linha e build com contexto) mantendo pendências abertas e próximas etapas claras.
 
 ## [v0.2.0] - 2025-11-23
 ### Added

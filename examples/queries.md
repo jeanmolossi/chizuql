@@ -450,3 +450,76 @@ args: ["Ana" 1]
 - `Cube` cria todas as combinações possíveis entre as colunas informadas.
 - `WithMySQLReturningMode(MySQLReturningOmit)` remove `RETURNING` para dialetos MySQL, evitando erros em servidores que não suportam a cláusula.
 - Para MySQL 8.0+, mantenha o modo padrão (`MySQLReturningStrict`) e a cláusula `RETURNING` será emitida normalmente.
+
+### 16. Locks de linha (`FOR UPDATE`/`LOCK IN SHARE MODE`)
+**Query**
+```go
+lockShared := chizuql.New().
+    Select("id", "email").
+    From("users").
+    Where(chizuql.Col("status").Eq("pending")).
+    OrderBy("id ASC").
+    Limit(10).
+    LockInShareMode()
+
+lockUpdate := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    Select("id").
+    From("jobs").
+    Where(chizuql.Col("locked_at").IsNull()).
+    OrderBy("created_at").
+    ForUpdate()
+
+sqlShared, argsShared := lockShared.Build()
+sqlUpdate, argsUpdate := lockUpdate.Build()
+```
+
+**Saída gerada**
+```
+SELECT id, email FROM users WHERE (status = ?) ORDER BY id ASC LIMIT 10 LOCK IN SHARE MODE
+args: ["pending"]
+
+SELECT id FROM jobs WHERE (locked_at IS NULL) ORDER BY created_at FOR UPDATE
+args: []
+```
+
+**Comentários**
+- `LockInShareMode` adapta a cláusula ao dialeto: em MySQL gera `LOCK IN SHARE MODE`; em PostgreSQL rende `FOR SHARE`.
+- `ForUpdate` sempre gera `FOR UPDATE` e é útil para enfileirar/consumir registros com controle de concorrência.
+- Locks são aplicados após `ORDER BY`/`LIMIT`, combinando bem com paginação de lotes.
+
+### 17. Build com `context.Context` e métricas
+**Query**
+```go
+ctx := context.Background()
+
+q := chizuql.New().
+    Select("id", "name").
+    From("users").
+    Where(chizuql.Col("deleted_at").IsNull())
+
+sql, args, report, err := q.BuildContext(ctx)
+if err != nil {
+    return err
+}
+
+fmt.Println("SQL:", sql)
+fmt.Println("args:", args)
+fmt.Println("dialeto:", report.DialectKind)
+fmt.Println("args total:", report.ArgsCount)
+fmt.Println("tempo:", report.RenderDuration)
+```
+
+**Saída gerada**
+```
+SQL: SELECT id, name FROM users WHERE (deleted_at IS NULL)
+args: []
+dialeto: mysql
+args total: 0
+tempo: 50.12µs
+```
+
+**Comentários**
+- `BuildContext` retorna métricas do render (duração e contagem de argumentos) e aceita cancelamento por contexto.
+- Para cancelar rapidamente builds longos, passe um contexto com deadline ou cancelamento antecipado.
+- O método `Build` tradicional permanece disponível para chamadas simples sem contexto.

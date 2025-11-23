@@ -169,6 +169,27 @@ q := chizuql.New().
 sql, args := q.Build()
 ```
 
+### Locks de linha com `FOR UPDATE`/`LOCK IN SHARE MODE`
+```go
+lockShared := chizuql.New().
+    Select("id", "email").
+    From("users").
+    Where(chizuql.Col("status").Eq("pending")).
+    OrderBy("id").
+    Limit(10).
+    LockInShareMode()
+
+lockUpdate := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    Select("id").
+    From("jobs").
+    Where(chizuql.Col("locked_at").IsNull()).
+    ForUpdate()
+```
+
+- `LockInShareMode` adapta a sintaxe ao dialeto: MySQL recebe `LOCK IN SHARE MODE`; PostgreSQL usa `FOR SHARE`.
+- `ForUpdate` sempre gera `FOR UPDATE`, útil para filas e workers que precisam impedir leitura concorrente enquanto processam.
+
 ### Agrupamentos avançados
 ```go
 q := chizuql.New().
@@ -200,6 +221,28 @@ update := chizuql.New().
 
 sql, args := update.Build()
 ```
+
+### Build com `context.Context` e métricas
+```go
+ctx := context.Background()
+
+q := chizuql.New().
+    Select("id", "name").
+    From("users").
+    Where(chizuql.Col("deleted_at").IsNull())
+
+sql, args, report, err := q.BuildContext(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println("dialeto:", report.DialectKind)
+fmt.Println("args:", args)
+fmt.Println("latência de build:", report.RenderDuration)
+```
+
+- `BuildContext` aceita cancelamento por contexto (útil em builds longos) e retorna métricas de renderização.
+- O método `Build` original continua disponível para uso rápido sem contexto.
 
 ## Recursos principais
 - SELECT, INSERT, UPDATE, DELETE com cláusulas fluentes
@@ -277,8 +320,8 @@ sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("i
 - [x] Introduzir API para window functions (`OVER`, partitions, frames).
 - [x] Oferecer builders para `GROUPING SETS`/`CUBE`/`ROLLUP`.
 - [x] Implementar suporte a `RETURNING` no MySQL 8.0+ (quando disponível) com fallback configurável.
-- [ ] Adicionar helpers para `LOCK IN SHARE MODE`/`FOR UPDATE` conforme dialeto.
-- [ ] Criar integração com contextos para cancelar build longo e medir métricas.
+- [x] Adicionar helpers para `LOCK IN SHARE MODE`/`FOR UPDATE` conforme dialeto.
+- [x] Criar integração com contextos para cancelar build longo e medir métricas.
 - [ ] Documentar exemplos de integração com ORMs (GORM, sqlc) e migrações.
 - [ ] Suportar optimizer hints/hints de planner específicos por dialeto.
 - [ ] Oferecer helpers para paginação por cursor (keyset pagination) na API fluente.

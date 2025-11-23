@@ -1,6 +1,7 @@
 package chizuql
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
@@ -16,6 +17,50 @@ func assertBuild(t *testing.T, q *Query, wantSQL string, wantArgs []any) {
 
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("unexpected args.\nwant: %#v\n got: %#v", wantArgs, gotArgs)
+	}
+}
+
+func TestBuildContextWithMetrics(t *testing.T) {
+	ctx := context.Background()
+
+	q := New().
+		Select("id").
+		From("users").
+		Where(Col("id").Eq(99))
+
+	gotSQL, gotArgs, report, err := q.BuildContext(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotSQL != "SELECT id FROM users WHERE (id = ?)" {
+		t.Fatalf("unexpected SQL: %s", gotSQL)
+	}
+
+	if !reflect.DeepEqual(gotArgs, []any{99}) {
+		t.Fatalf("unexpected args: %#v", gotArgs)
+	}
+
+	if report.ArgsCount != 1 {
+		t.Fatalf("expected ArgsCount=1, got %d", report.ArgsCount)
+	}
+
+	if report.DialectKind != dialectMySQL {
+		t.Fatalf("expected dialect %s, got %s", dialectMySQL, report.DialectKind)
+	}
+
+	if report.RenderDuration <= 0 {
+		t.Fatalf("expected positive render duration, got %s", report.RenderDuration)
+	}
+}
+
+func TestBuildContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, _, err := New().Select("id").From("users").BuildContext(ctx)
+	if err == nil {
+		t.Fatalf("expected cancellation error")
 	}
 }
 
@@ -50,6 +95,37 @@ func TestJoinGroupHaving(t *testing.T) {
 		"SELECT u.id, COUNT(p.id) AS post_count FROM users AS u LEFT JOIN posts AS p ON (u.id = p.user_id) GROUP BY u.id HAVING (COUNT(p.id) > ?) ORDER BY post_count DESC",
 		[]any{0},
 	)
+}
+
+func TestRowLevelLocks(t *testing.T) {
+	lockMySQL := New().
+		Select("id").
+		From("users").
+		OrderBy("id").
+		Limit(1).
+		LockInShareMode()
+
+	assertBuild(t, lockMySQL, "SELECT id FROM users ORDER BY id LIMIT 1 LOCK IN SHARE MODE", nil)
+
+	lockPg := New().
+		WithDialect(DialectPostgres).
+		Select("id").
+		From("users").
+		ForUpdate()
+
+	assertBuild(t, lockPg, "SELECT id FROM users FOR UPDATE", nil)
+}
+
+func TestRowLevelLockPanics(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic when using lock on non-select")
+		}
+	}()
+
+	New().Update("users").Set(Set("name", "x")).ForUpdate()
 }
 
 func TestBetweenPredicates(t *testing.T) {

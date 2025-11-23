@@ -1,9 +1,11 @@
 package chizuql
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 type queryType string
@@ -37,6 +39,18 @@ const (
 	// MySQLReturningOmit silently removes RETURNING for MySQL builds, useful for older servers.
 	MySQLReturningOmit
 )
+
+type lockMode int
+
+const (
+	lockNone lockMode = iota
+	lockForUpdate
+	lockShare
+)
+
+type lockClause struct {
+	mode lockMode
+}
 
 type sqlDialect struct {
 	kind dialectKind
@@ -155,6 +169,18 @@ type Query struct {
 	deleteTable TableExpression
 
 	returning []Expression
+
+	lock lockClause
+}
+
+// BuildReport captures metrics from query rendering.
+type BuildReport struct {
+	// RenderDuration is the total time spent generating SQL and arguments.
+	RenderDuration time.Duration
+	// ArgsCount is the number of placeholders/arguments emitted.
+	ArgsCount int
+	// DialectKind is the dialect that was used for rendering.
+	DialectKind dialectKind
 }
 
 // New returns a fresh Query instance ready to be composed.
@@ -339,6 +365,24 @@ func (q *Query) OrderBy(expressions ...any) *Query {
 	return q
 }
 
+// ForUpdate appends a FOR UPDATE lock to the SELECT statement.
+func (q *Query) ForUpdate() *Query {
+	q.ensureLockable()
+
+	q.lock = lockClause{mode: lockForUpdate}
+
+	return q
+}
+
+// LockInShareMode appends a shared lock clause (dialect-aware) to the SELECT statement.
+func (q *Query) LockInShareMode() *Query {
+	q.ensureLockable()
+
+	q.lock = lockClause{mode: lockShare}
+
+	return q
+}
+
 // Limit sets a LIMIT clause.
 func (q *Query) Limit(limit int) *Query {
 	if len(q.unions) > 0 {
@@ -433,11 +477,49 @@ func (q *Query) Build() (string, []any) {
 	return sql, ctx.args
 }
 
+// BuildContext renders SQL and arguments honoring cancellation and returning basic metrics.
+func (q *Query) BuildContext(ctx context.Context) (string, []any, BuildReport, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if err := ctx.Err(); err != nil {
+		return "", nil, BuildReport{}, err
+	}
+
+	dialect := q.dialect
+	if dialect == nil {
+		dialect = DefaultDialect()
+	}
+
+	buildCtx := &buildContext{dialect: dialect, mysqlReturning: q.mysqlReturningMode}
+	start := time.Now()
+	sql := strings.TrimSpace(q.render(buildCtx))
+	report := BuildReport{
+		RenderDuration: time.Since(start),
+		ArgsCount:      len(buildCtx.args),
+	}
+
+	if inspected, ok := dialectKindOf(dialect); ok {
+		report.DialectKind = inspected
+	}
+
+	if err := ctx.Err(); err != nil {
+		return "", nil, BuildReport{}, err
+	}
+
+	return sql, buildCtx.args, report, nil
+}
+
 func (q *Query) render(ctx *buildContext) string {
 	if q.qType == queryTypeRaw {
 		ctx.args = append(ctx.args, q.rawArgs...)
 
 		return q.rawSQL
+	}
+
+	if q.lock.mode != lockNone && len(q.unions) > 0 {
+		panic("row-level locks não são suportados em consultas UNION/UNION ALL")
 	}
 
 	sql := strings.Builder{}
@@ -542,6 +624,7 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext, includeOrde
 	}
 
 	q.appendPagination(sql, q.limit, q.offset)
+	q.appendLock(sql, ctx)
 }
 
 func (q *Query) buildSetSelect(sql *strings.Builder, ctx *buildContext) {
@@ -562,6 +645,7 @@ func (q *Query) buildSetSelect(sql *strings.Builder, ctx *buildContext) {
 	q.appendOrdering(sql, ctx)
 
 	q.appendPagination(sql, q.setLimit, q.setOffset)
+	q.appendLock(sql, ctx)
 }
 
 func (q *Query) appendOrdering(sql *strings.Builder, ctx *buildContext) {
@@ -605,6 +689,33 @@ func (q *Query) appendPagination(sql *strings.Builder, limit *int, offset *int) 
 
 	if offset != nil {
 		fmt.Fprintf(sql, " OFFSET %d", *offset)
+	}
+}
+
+func (q *Query) appendLock(sql *strings.Builder, ctx *buildContext) {
+	if q.lock.mode == lockNone {
+		return
+	}
+
+	switch q.lock.mode {
+	case lockForUpdate:
+		sql.WriteString(" FOR UPDATE")
+	case lockShare:
+		if kind, ok := dialectKindOf(ctx.dialect); ok && kind == dialectMySQL {
+			sql.WriteString(" LOCK IN SHARE MODE")
+		} else {
+			sql.WriteString(" FOR SHARE")
+		}
+	}
+}
+
+func (q *Query) ensureLockable() {
+	if q.qType != queryTypeSelect {
+		panic("row-level locks estão disponíveis apenas para consultas SELECT")
+	}
+
+	if len(q.unions) > 0 {
+		panic("row-level locks não são suportados em consultas UNION/UNION ALL")
 	}
 }
 
