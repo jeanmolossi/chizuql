@@ -13,6 +13,9 @@ All notable changes to this project will be documented in this file. The format 
 ### Changed
 - Roadmap atualizado com a entrega de paginação por cursor e novo próximo passo para serialização de cursores.
 
+### Fixed
+- Corrigido `KeysetAfter/Before` para preservar a direção de ordenações fornecidas como string e evitar SQL inválido em paginação por cursor.
+
 ## [v0.4.0] - 2025-11-23
 
 ### Added

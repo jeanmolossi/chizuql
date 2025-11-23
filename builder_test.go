@@ -538,6 +538,31 @@ func TestKeysetPaginationHelpers(t *testing.T) {
 	)
 }
 
+func TestKeysetPaginationWithRawOrderings(t *testing.T) {
+	next := New().
+		Select("id", "created_at").
+		From("posts").
+		OrderBy("id DESC", "created_at ASC").
+		KeysetAfter(100, "2024-12-31 23:59:59").
+		Limit(10)
+
+	assertBuild(t, next,
+		"SELECT id, created_at FROM posts WHERE (((id < ?) OR (id = ? AND created_at > ?))) ORDER BY id DESC, created_at ASC LIMIT 10",
+		[]any{100, 100, "2024-12-31 23:59:59"},
+	)
+
+	prev := New().
+		Select("id").
+		From("posts").
+		OrderBy("id DESC").
+		KeysetBefore(42)
+
+	assertBuild(t, prev,
+		"SELECT id FROM posts WHERE (((id > ?))) ORDER BY id DESC",
+		[]any{42},
+	)
+}
+
 func TestKeysetPaginationPanics(t *testing.T) {
 	assertPanicsWith(t, func() {
 		New().Select("id").From("items").KeysetAfter(1)

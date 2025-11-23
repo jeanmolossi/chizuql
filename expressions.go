@@ -755,9 +755,49 @@ func extractOrdering(expr Expression) (Expression, string) {
 	switch v := expr.(type) {
 	case orderedExpr:
 		return v.expr, strings.ToUpper(v.order)
-	default:
-		return expr, "ASC"
+	case rawExpr:
+		if base, direction, ok := parseRawOrdering(v); ok {
+			return base, direction
+		}
 	}
+
+	return expr, "ASC"
+}
+
+func parseRawOrdering(raw rawExpr) (Expression, string, bool) {
+	sql := strings.TrimSpace(raw.sql)
+	if sql == "" {
+		return raw, "", false
+	}
+
+	tokens := strings.Fields(sql)
+	if len(tokens) < 2 {
+		return raw, "", false
+	}
+
+	dirIdx := -1
+
+	for i := len(tokens) - 1; i >= 0; i-- {
+		tok := strings.ToUpper(tokens[i])
+		if tok == "ASC" || tok == "DESC" {
+			dirIdx = i
+
+			break
+		}
+	}
+
+	if dirIdx == -1 {
+		return raw, "", false
+	}
+
+	baseSQL := strings.Join(tokens[:dirIdx], " ")
+	if strings.TrimSpace(baseSQL) == "" {
+		return raw, "", false
+	}
+
+	direction := strings.ToUpper(tokens[dirIdx])
+
+	return rawExpr{sql: baseSQL, args: raw.args}, direction, true
 }
 
 // KeysetAfter builds a keyset pagination predicate for moving forward (next page) using the provided ORDER BY expressions.
