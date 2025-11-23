@@ -6,6 +6,7 @@
 - Confirme explicitamente as versões de Go (1.25) e do `golangci-lint` (2.6.2+) antes de iniciar qualquer alteração e não altere versões ou toolchains a menos que seja solicitado de forma explícita.
 - Sempre execute `go test ./...` e `golangci-lint run --fix ./...` antes de abrir PRs ou concluir entregas; corrija eventuais alertas de lint. O lint deve ser executado apenas quando houver alterações em arquivos `*.go` no diff final.
 - Toda alteração em `.golangci.yml` deve seguir estritamente o schema oficial (https://golangci-lint.run/jsonschema/golangci.jsonschema.json), mantendo as propriedades válidas para a versão atual do lint.
+- As configurações de lint devem usar apenas chaves previstas no schema oficial: para `wsl_v5`, utilize os campos `allow-first-in-block`, `allow-whole-block`, `branch-max-lines`, `case-max-lines`, `default`, `enable` e `disable`; para `issues` na raiz, limite-se a `max-issues-per-linter`, `max-same-issues`, `new`, `new-from-merge-base`, `new-from-rev`, `new-from-patch`, `fix`, `uniq-by-line` e `whole-files`.
 - Atualize o `CHANGELOG.md` seguindo o formato Keep a Changelog, adicionando entradas em "Unreleased" e abrindo novas seções versionadas (tags `vX.Y.Z`) para cada release.
 - Releases devem seguir versionamento semântico. Para lançar uma versão: prepare a entrada no changelog, atualize documentação pertinente, gere a tag `vX.Y.Z` e garanta que o lint e os testes passaram.
 - Novas contribuições devem respeitar esta lista de checagens e apontar a versão/tag correspondente no changelog quando aplicável.
