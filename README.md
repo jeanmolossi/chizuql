@@ -316,6 +316,26 @@ sqlPg, _ := q.WithDialect(chizuql.DialectPostgres).Build()
 // SELECT /*+ SeqScan(users) OFF */ id FROM users
 ```
 
+### Paginação por cursor (keyset)
+```go
+page := chizuql.New().
+    Select("id", "created_at").
+    From("posts").
+    OrderBy(
+        chizuql.Col("id").Asc(),
+        chizuql.Col("created_at").Desc(),
+    ).
+    KeysetAfter(120, "2025-01-01 00:00:00").
+    Limit(20)
+
+sql, args := page.Build()
+// SELECT id, created_at FROM posts WHERE ((id > ? OR (id = ? AND created_at < ?))) ORDER BY id ASC, created_at DESC LIMIT 20
+// args: [120 120 "2025-01-01 00:00:00"]
+```
+
+Use `KeysetBefore` com os mesmos campos de ordenação para navegar para a página anterior; a direção do comparador é invertida
+automaticamente para ordenações `DESC`.
+
 ## Integração com ORMs (GORM, sqlc) e migrações
 ### GORM
 ```go
@@ -415,10 +435,11 @@ if _, err := db.ExecContext(ctx, sqlStr); err != nil {
 - [x] Criar integração com contextos para cancelar build longo e medir métricas.
 - [x] Documentar exemplos de integração com ORMs (GORM, sqlc) e migrações.
 - [x] Suportar optimizer hints/hints de planner específicos por dialeto.
-- [ ] Oferecer helpers para paginação por cursor (keyset pagination) na API fluente.
+- [x] Oferecer helpers para paginação por cursor (keyset pagination) na API fluente.
 - [ ] Adicionar builders para `INTERSECT`/`EXCEPT` com ordenação e paginação em nível de conjunto.
 - [ ] Expor builders para `LATERAL JOIN`/`CROSS APPLY` onde suportados.
 - [ ] Oferecer API para `MERGE`/`INSERT ... ON DUPLICATE KEY` com estratégias portáveis.
+- [ ] Serializar/deserializar cursores de paginação (token seguro) para facilitar APIs públicas.
 
 ## Licença
 MIT

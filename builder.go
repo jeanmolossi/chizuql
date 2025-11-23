@@ -419,6 +419,34 @@ func (q *Query) OrderBy(expressions ...any) *Query {
 	return q
 }
 
+// KeysetAfter applies a forward (next page) keyset pagination predicate using the configured ORDER BY expressions.
+//
+// The number of cursor values must match the number of ORDER BY expressions. For descending orderings, the comparison is
+// inverted automatically. Call OrderBy before invoking KeysetAfter.
+func (q *Query) KeysetAfter(cursorValues ...any) *Query {
+	if len(q.orderBy) == 0 {
+		panic("KeysetAfter requer ORDER BY configurado")
+	}
+
+	q.Where(KeysetAfter(q.orderBy, cursorValues...))
+
+	return q
+}
+
+// KeysetBefore applies a backward (previous page) keyset pagination predicate using the configured ORDER BY expressions.
+//
+// The number of cursor values must match the number of ORDER BY expressions. For descending orderings, the comparison is
+// inverted automatically. Call OrderBy before invoking KeysetBefore.
+func (q *Query) KeysetBefore(cursorValues ...any) *Query {
+	if len(q.orderBy) == 0 {
+		panic("KeysetBefore requer ORDER BY configurado")
+	}
+
+	q.Where(KeysetBefore(q.orderBy, cursorValues...))
+
+	return q
+}
+
 // ForUpdate appends a FOR UPDATE lock to the SELECT statement.
 func (q *Query) ForUpdate() *Query {
 	q.ensureLockable()
