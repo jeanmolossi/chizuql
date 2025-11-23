@@ -5,13 +5,18 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
-- Nada até o momento.
+- Configuração do Renovate em `.github/renovate.json` para automatizar atualizações de dependências (Go modules e GitHub Actions) com painel dedicado.
+- Workflows de qualidade, estabilidade e segurança (`code-quality.yml`, `stability.yml`, `security.yml`) executando lint, testes e varredura CodeQL com Go 1.25.
+- Workflow de revisão de dependências (`vulnerability-scan.yml`) para checar vulnerabilidades em PRs utilizando `actions/dependency-review-action`.
 
 ### Changed
-- Nada até o momento.
+- Instruções do `AGENTS.md` reforçadas para evitar downgrade das versões das actions utilizadas nas pipelines de CI.
+- `AGENTS.md` agora orienta que qualquer alteração em `.golangci.yml` siga o schema oficial do `golangci-lint`.
+- `AGENTS.md` detalha as chaves permitidas para `wsl_v5` e para a raiz de `issues` conforme o schema do golangci-lint.
 
 ### Fixed
-- Nada até o momento.
+- Configuração do `.golangci.yml` realinhada com o schema oficial, mantendo `wsl_v5` e `issues` restritos às propriedades suportadas.
+- Campo `version` em `.golangci.yml` ajustado para usar string conforme o schema do `golangci-lint`.
 
 ## [v0.5.0] - 2025-11-23
 

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base",
+    ":dependencyDashboard",
+    "group:recommended",
+    "schedule:weekly"
+  ],
+  "dependencyDashboardTitle": "Renovate Dashboard",
+  "rangeStrategy": "bump",
+  "timezone": "America/Sao_Paulo",
+  "prConcurrentLimit": 5,
+  "labels": [
+    "dependencies"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "groupName": "Go module dependencies",
+      "semanticCommitType": "chore",
+      "stabilityDays": 2
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "CI dependencies",
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "matchDatasources": ["golang-version"],
+      "allowedVersions": "1.25"
+    }
+  ]
+}
