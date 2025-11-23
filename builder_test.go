@@ -99,15 +99,41 @@ func TestBuildHooks(t *testing.T) {
 	}
 }
 
-func TestBuildContextWithMetrics(t *testing.T) {
-	ctx := context.Background()
+func TestBuildContextWithTelemetryPropagation(t *testing.T) {
+	t.Cleanup(func() { SetGlobalBuildHooks() })
+
+	type ctxKey string
+
+	ctx := context.WithValue(context.Background(), ctxKey("traceparent"), "abc123")
 
 	q := New().
 		Select("id").
 		From("users").
 		Where(Col("id").Eq(99))
 
-	gotSQL, gotArgs, report, err := q.BuildContext(ctx)
+	var (
+		capturedContextValue any
+		report               BuildReport
+	)
+
+	RegisterBuildHooks(BuildHookFuncs{
+		Before: func(ctx context.Context, _ *Query) error {
+			capturedContextValue = ctx.Value(ctxKey("traceparent"))
+
+			return nil
+		},
+		After: func(ctx context.Context, result BuildResult) error {
+			if capturedContextValue == nil {
+				capturedContextValue = ctx.Value(ctxKey("traceparent"))
+			}
+
+			report = result.Report
+
+			return nil
+		},
+	})
+
+	gotSQL, gotArgs, err := q.BuildContext(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,6 +144,10 @@ func TestBuildContextWithMetrics(t *testing.T) {
 
 	if !reflect.DeepEqual(gotArgs, []any{99}) {
 		t.Fatalf("unexpected args: %#v", gotArgs)
+	}
+
+	if capturedContextValue != "abc123" {
+		t.Fatalf("expected context propagation, got %v", capturedContextValue)
 	}
 
 	if report.ArgsCount != 1 {
@@ -137,7 +167,7 @@ func TestBuildContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, _, err := New().Select("id").From("users").BuildContext(ctx)
+	_, _, err := New().Select("id").From("users").BuildContext(ctx)
 	if err == nil {
 		t.Fatalf("expected cancellation error")
 	}

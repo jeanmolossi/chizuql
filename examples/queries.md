@@ -524,29 +524,24 @@ q := chizuql.New().
     From("users").
     Where(chizuql.Col("deleted_at").IsNull())
 
-sql, args, report, err := q.BuildContext(ctx)
+sql, args, err := q.BuildContext(ctx)
 if err != nil {
     return err
 }
 
 fmt.Println("SQL:", sql)
 fmt.Println("args:", args)
-fmt.Println("dialeto:", report.DialectKind)
-fmt.Println("args total:", report.ArgsCount)
-fmt.Println("tempo:", report.RenderDuration)
 ```
 
 **Saída gerada**
 ```
 SQL: SELECT id, name FROM users WHERE (deleted_at IS NULL)
 args: []
-dialeto: mysql
-args total: 0
-tempo: 50.12µs
 ```
 
 **Comentários**
-- `BuildContext` retorna métricas do render (duração e contagem de argumentos) e aceita cancelamento por contexto.
+- `BuildContext` propaga o contexto para os hooks de build (útil para tracing/logs) e aceita cancelamento por contexto.
+- Métricas de renderização continuam acessíveis via `BuildResult` dentro dos hooks `BeforeBuild`/`AfterBuild`.
 - Para cancelar rapidamente builds longos, passe um contexto com deadline ou cancelamento antecipado.
 - O método `Build` tradicional permanece disponível para chamadas simples sem contexto.
 

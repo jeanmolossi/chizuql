@@ -703,24 +703,27 @@ func (q *Query) buildWithContext(ctx context.Context) (BuildResult, error) {
 	return result, nil
 }
 
-// Build renders the SQL string and the ordered arguments slice.
+// Build renders the SQL string and the ordered arguments slice using a background context.
 func (q *Query) Build() (string, []any) {
-	result, err := q.buildWithContext(context.Background())
+	sql, args, err := q.BuildContext(context.Background())
 	if err != nil {
 		return "", nil
 	}
 
-	return result.SQL, result.Args
+	return sql, args
 }
 
-// BuildContext renders SQL and arguments honoring cancellation and returning basic metrics.
-func (q *Query) BuildContext(ctx context.Context) (string, []any, BuildReport, error) {
+// BuildContext renders SQL and arguments honoring cancellation and context propagation for telemetry.
+//
+// Hooks receive the provided context, enabling tracing metadata (ex: traceparent) to be propagated without
+// altering the build result. Build metrics remain available to hooks via BuildResult.Report.
+func (q *Query) BuildContext(ctx context.Context) (string, []any, error) {
 	result, err := q.buildWithContext(ctx)
 	if err != nil {
-		return "", nil, BuildReport{}, err
+		return "", nil, err
 	}
 
-	return result.SQL, result.Args, result.Report, nil
+	return result.SQL, result.Args, nil
 }
 
 func (q *Query) render(ctx *buildContext) string {

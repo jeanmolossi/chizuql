@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file. The format 
 - Instruções do `AGENTS.md` reforçadas para evitar downgrade das versões das actions utilizadas nas pipelines de CI.
 - `AGENTS.md` agora orienta que qualquer alteração em `.golangci.yml` siga o schema oficial do `golangci-lint`.
 - `AGENTS.md` detalha as chaves permitidas para `wsl_v5` e para a raiz de `issues` conforme o schema do golangci-lint.
+- `BuildContext` agora retorna apenas SQL e args enquanto propaga o `context.Context` para os hooks; métricas permanecem disponíveis em `BuildResult` dentro dos callbacks.
 
 ### Fixed
 - Configuração do `.golangci.yml` realinhada com o schema oficial, mantendo `wsl_v5` e `issues` restritos às propriedades suportadas.
