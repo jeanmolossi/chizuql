@@ -634,6 +634,8 @@ type buildContext struct {
 	args             []any
 	dialect          Dialect
 	placeholderIndex int
+	subqueryAlias    int
+	subqueryAliases  map[*Query]string
 }
 
 // nextPlaceholder appends the provided argument and returns the placeholder symbol.
@@ -643,6 +645,22 @@ func (ctx *buildContext) nextPlaceholder(arg any) string {
 	ctx.args = append(ctx.args, arg)
 
 	return pl
+}
+
+func (ctx *buildContext) nextSubqueryAlias(q *Query) string {
+	if ctx.subqueryAliases == nil {
+		ctx.subqueryAliases = make(map[*Query]string)
+	}
+
+	if alias, ok := ctx.subqueryAliases[q]; ok {
+		return alias
+	}
+
+	ctx.subqueryAlias++
+	alias := fmt.Sprintf("subq_%d", ctx.subqueryAlias)
+	ctx.subqueryAliases[q] = alias
+
+	return alias
 }
 
 // cte represents a common table expression definition.
@@ -716,18 +734,23 @@ func FromSubquery(q *Query, alias string) TableRef {
 
 func (t TableRef) build(ctx *buildContext) string {
 	sb := strings.Builder{}
+	alias := t.alias
 
 	if t.sub != nil {
 		sb.WriteString("(")
 		sb.WriteString(t.sub.render(ctx))
 		sb.WriteString(")")
+
+		if alias == "" {
+			alias = ctx.nextSubqueryAlias(t.sub)
+		}
 	} else {
 		sb.WriteString(t.name)
 	}
 
-	if t.alias != "" {
+	if alias != "" {
 		sb.WriteString(" AS ")
-		sb.WriteString(t.alias)
+		sb.WriteString(alias)
 	}
 
 	return sb.String()
@@ -739,6 +762,8 @@ func toTableExpression(value any) TableExpression {
 		return v
 	case *Query:
 		return FromSubquery(v, "")
+	case Query:
+		return FromSubquery(&v, "")
 	case string:
 		return TableRef{name: v}
 	default:

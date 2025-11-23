@@ -16,6 +16,10 @@ func requireDialect(ctx *buildContext, expected dialectKind, feature string) {
 	}
 }
 
+func escapeSingleQuotes(value string) string {
+	return strings.ReplaceAll(value, "'", "''")
+}
+
 // Expression represents any fragment that can be embedded in SQL.
 type Expression interface {
 	build(*buildContext) string
@@ -312,6 +316,11 @@ func (t TsVectorBuilder) WithConfig(config string) TsVectorBuilder {
 	return t
 }
 
+// WithLanguage is an alias for WithConfig to highlight language switching on PostgreSQL FTS.
+func (t TsVectorBuilder) WithLanguage(language string) TsVectorBuilder {
+	return t.WithConfig(language)
+}
+
 // WebSearch builds a websearch_to_tsquery predicate.
 func (t TsVectorBuilder) WebSearch(query string) Predicate {
 	return tsQueryPredicate{builder: t, query: query, mode: "web"}
@@ -359,13 +368,14 @@ func (t TsVectorBuilder) buildTsQuery(ctx *buildContext, query string, mode stri
 	requireDialect(ctx, dialectPostgres, "Full Text Search (tsvector)")
 
 	placeholder := ctx.nextPlaceholder(query)
-	vector := fmt.Sprintf("to_tsvector('%s', %s)", t.config, t.concatColumns())
+	config := escapeSingleQuotes(t.config)
+	vector := fmt.Sprintf("to_tsvector('%s', %s)", config, t.concatColumns())
 
 	switch mode {
 	case "web":
-		return vector, fmt.Sprintf("websearch_to_tsquery('%s', %s)", t.config, placeholder)
+		return vector, fmt.Sprintf("websearch_to_tsquery('%s', %s)", config, placeholder)
 	default:
-		return vector, fmt.Sprintf("plainto_tsquery('%s', %s)", t.config, placeholder)
+		return vector, fmt.Sprintf("plainto_tsquery('%s', %s)", config, placeholder)
 	}
 }
 
@@ -398,6 +408,81 @@ func pickNormalization(values []int) *int {
 	}
 
 	return &values[0]
+}
+
+// JSONExtract builds a dialect-aware JSON/JSONB extractor using parameterized paths.
+func JSONExtract(column string, path any) Expression {
+	return jsonExtractExpr{column: column, path: toValueExpression(path)}
+}
+
+// JSONExtractText unwraps JSON/JSONB values into text while keeping paths parameterized.
+func JSONExtractText(column string, path any) Expression {
+	return jsonExtractExpr{column: column, path: toValueExpression(path), unwrap: true}
+}
+
+type jsonExtractExpr struct {
+	column string
+	path   Expression
+	unwrap bool
+}
+
+func (j jsonExtractExpr) build(ctx *buildContext) string {
+	kind, ok := dialectKindOf(ctx.dialect)
+	if !ok {
+		panic("Extração de JSON requer um dialeto reconhecido")
+	}
+
+	path := j.path.build(ctx)
+
+	var expr string
+
+	switch kind {
+	case dialectMySQL:
+		expr = fmt.Sprintf("JSON_EXTRACT(%s, %s)", j.column, path)
+	case dialectPostgres:
+		expr = fmt.Sprintf("jsonb_path_query_first(to_jsonb(%s), (%s)::jsonpath)", j.column, path)
+	default:
+		panic("Extração de JSON não suportada para este dialeto")
+	}
+
+	if j.unwrap {
+		switch kind {
+		case dialectMySQL:
+			return fmt.Sprintf("JSON_UNQUOTE(%s)", expr)
+		case dialectPostgres:
+			return fmt.Sprintf("(%s)::text", expr)
+		}
+	}
+
+	return expr
+}
+
+// JSONContains builds a containment predicate for JSON/JSONB values.
+func JSONContains(column string, value any) Predicate {
+	return jsonContainsPredicate{column: column, value: toValueExpression(value)}
+}
+
+type jsonContainsPredicate struct {
+	column string
+	value  Expression
+}
+
+func (j jsonContainsPredicate) build(ctx *buildContext) string {
+	kind, ok := dialectKindOf(ctx.dialect)
+	if !ok {
+		panic("JSON_CONTAINS requer um dialeto reconhecido")
+	}
+
+	value := j.value.build(ctx)
+
+	switch kind {
+	case dialectMySQL:
+		return fmt.Sprintf("JSON_CONTAINS(%s, %s)", j.column, value)
+	case dialectPostgres:
+		return fmt.Sprintf("to_jsonb(%s) @> (%s)::jsonb", j.column, value)
+	default:
+		panic("JSON_CONTAINS não suportado para este dialeto")
+	}
 }
 
 type orderedExpr struct {

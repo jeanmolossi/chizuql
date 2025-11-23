@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file. The format 
 ### Added
 - Builders de ranking para buscas textuais: `Match.Score` no MySQL e `TsVector.RankWebSearch/RankPlainQuery` no PostgreSQL, incluindo ordenação por relevância e normalização opcional.
 - Roadmap expandido com novos próximos passos para evolução do pacote.
+- Alternância de idioma/configuração para buscas textuais PostgreSQL via `TsVector.WithLanguage` (compatível com `WithConfig`).
+- Aliases automáticos para subconsultas em `FROM`/`JOIN`, garantindo SQL válido em dialetos que exigem nomeação.
+- Helpers parametrizados para JSON/JSONB (`JSONExtract`, `JSONExtractText`, `JSONContains`) compatíveis com MySQL e PostgreSQL.
 
 ### Changed
 - Cláusulas de busca textual agora validam o dialeto selecionado, impedindo `MATCH ... AGAINST` em PostgreSQL e `TsVector` em MySQL.
