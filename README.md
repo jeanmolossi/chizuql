@@ -231,17 +231,17 @@ q := chizuql.New().
     From("users").
     Where(chizuql.Col("deleted_at").IsNull())
 
-sql, args, report, err := q.BuildContext(ctx)
+sql, args, err := q.BuildContext(ctx)
 if err != nil {
     log.Fatal(err)
 }
 
-fmt.Println("dialeto:", report.DialectKind)
 fmt.Println("args:", args)
-fmt.Println("latência de build:", report.RenderDuration)
+fmt.Println("query:", sql)
 ```
 
-- `BuildContext` aceita cancelamento por contexto (útil em builds longos) e retorna métricas de renderização.
+- `BuildContext` aceita cancelamento por contexto (útil em builds longos) e propaga o contexto para os hooks de build, facilitando tracing/logs.
+- Métricas de renderização (duração, placeholders, dialeto) continuam acessíveis via `BuildResult` dentro dos hooks.
 - O método `Build` original continua disponível para uso rápido sem contexto.
 
 ## Recursos principais
@@ -404,6 +404,83 @@ if _, err := db.ExecContext(ctx, sqlStr); err != nil {
 }
 ```
 - Para migrações declarativas que exigem SQL estático, `RawQuery` ajuda a compartilhar snippets consistentes (inclusive para rollback) mantendo a mesma estratégia de placeholders.
+
+## Hooks de build para métricas e logs
+
+- Use `BuildHook` para instrumentar o processo de renderização com callbacks `BeforeBuild`/`AfterBuild`. Registre hooks globais com `RegisterBuildHooks` ou restritos à query com `WithHooks`. Erros retornados pelos hooks são ignorados para que a geração de SQL não seja interrompida. O contexto recebido pelos hooks é o mesmo propagado ao `BuildContext`, permitindo extrair traceparent, request IDs ou iniciar spans. Trate `BuildResult.Args` como somente leitura dentro dos hooks.
+- Há hooks prontos em `hooks/` para tracing e métricas no formato OpenTelemetry e para logging estruturado via `log/slog`.
+
+```go
+var (
+    builds    []time.Duration
+    captured  string
+)
+
+// Hook global com funções inline; também é possível implementar a interface BuildHook.
+chizuql.RegisterBuildHooks(chizuql.BuildHookFuncs{
+    Before: func(ctx context.Context, _ *chizuql.Query) error {
+        if traceparent, ok := ctx.Value("traceparent").(string); ok {
+            captured = traceparent
+        }
+
+        return nil
+    },
+    After: func(ctx context.Context, result chizuql.BuildResult) error {
+        builds = append(builds, result.Report.RenderDuration)
+
+        log.Printf("traceparent=%s sql=%s args=%v duration=%s placeholders=%d", captured, result.SQL, result.Args, result.Report.RenderDuration, result.Report.ArgsCount)
+
+        return nil
+    },
+})
+
+ctx := context.WithValue(context.Background(), "traceparent", "00-a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4-0123456789abcdef-01")
+
+sql, args, err := chizuql.New().
+    WithHooks(chizuql.BuildHookFuncs{ // hook específico desta query
+        After: func(ctx context.Context, result chizuql.BuildResult) error {
+            fmt.Printf("captured %d placeholders in %s\n", result.Report.ArgsCount, result.Report.RenderDuration)
+
+            return nil
+        },
+    }).
+    Select("id", "email").
+    From("users").
+    Where(chizuql.Col("status").Eq("active")).
+    BuildContext(ctx)
+
+if err != nil {
+    return err
+}
+
+fmt.Println(sql, args)
+```
+
+```go
+// Exemplo com hooks especializados (OpenTelemetry + slog)
+tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))
+mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+defer tp.Shutdown(context.Background())
+defer mp.Shutdown(context.Background())
+
+tracerHook := hooks.TracingHook{Tracer: tp.Tracer("queries"), IncludeSQL: true}
+metricsHook := &hooks.MetricsHook{Meter: mp.Meter("queries")}
+loggingHook := hooks.LoggingHook{IncludeSQL: true}
+
+chizuql.RegisterBuildHooks(tracerHook, metricsHook, loggingHook)
+
+sql, args, err := chizuql.New().
+    Select("id").
+    From("users").
+    Where(chizuql.Col("status").Eq("active")).
+    BuildContext(context.Background())
+
+if err != nil {
+    return err
+}
+
+fmt.Println(sql, args)
+```
 
 - Desenvolvido e testado em Go 1.25.
 

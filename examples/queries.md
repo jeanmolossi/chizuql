@@ -524,29 +524,24 @@ q := chizuql.New().
     From("users").
     Where(chizuql.Col("deleted_at").IsNull())
 
-sql, args, report, err := q.BuildContext(ctx)
+sql, args, err := q.BuildContext(ctx)
 if err != nil {
     return err
 }
 
 fmt.Println("SQL:", sql)
 fmt.Println("args:", args)
-fmt.Println("dialeto:", report.DialectKind)
-fmt.Println("args total:", report.ArgsCount)
-fmt.Println("tempo:", report.RenderDuration)
 ```
 
 **Saída gerada**
 ```
 SQL: SELECT id, name FROM users WHERE (deleted_at IS NULL)
 args: []
-dialeto: mysql
-args total: 0
-tempo: 50.12µs
 ```
 
 **Comentários**
-- `BuildContext` retorna métricas do render (duração e contagem de argumentos) e aceita cancelamento por contexto.
+- `BuildContext` propaga o contexto para os hooks de build (útil para tracing/logs) e aceita cancelamento por contexto.
+- Métricas de renderização continuam acessíveis via `BuildResult` dentro dos hooks `BeforeBuild`/`AfterBuild`.
 - Para cancelar rapidamente builds longos, passe um contexto com deadline ou cancelamento antecipado.
 - O método `Build` tradicional permanece disponível para chamadas simples sem contexto.
 
@@ -627,3 +622,79 @@ _, err := db.ExecContext(ctx, sqlMig, argsMig...)
 **Comentários**
 - A saída do builder (`sql` + `args`) pode ser repassada diretamente a `db.Raw` do GORM ou aos métodos `QueryContext`/`ExecContext` usados pelo sqlc.
 - Para migrações estáticas, `RawQuery` permite compartilhar comandos validados (inclusive para rollback) com a mesma convenção de placeholders do projeto.
+
+### 20. Hooks de build para métricas e logs
+**Query**
+```go
+var lastDuration time.Duration
+
+chizuql.RegisterBuildHooks(chizuql.BuildHookFuncs{
+    After: func(ctx context.Context, result chizuql.BuildResult) error {
+        lastDuration = result.Report.RenderDuration
+
+        fmt.Printf("[hook] sql=%s | args=%v | placeholders=%d | duration=%s\n", result.SQL, result.Args, result.Report.ArgsCount, result.Report.RenderDuration)
+
+        return nil
+    },
+})
+
+q := chizuql.New().
+    WithHooks(chizuql.BuildHookFuncs{
+        Before: func(ctx context.Context, _ *chizuql.Query) error {
+            fmt.Println("montando consulta de usuários ativos")
+
+            return nil
+        },
+    }).
+    Select("id", "email").
+    From("users").
+    Where(chizuql.Col("status").Eq("active"))
+
+sql, args := q.Build()
+```
+
+**Saída gerada**
+```
+montando consulta de usuários ativos
+[hook] sql=SELECT id, email FROM users WHERE (status = ?) | args=["active"] | placeholders=1 | duration=173.191µs
+SELECT id, email FROM users WHERE (status = ?)
+args: ["active"]
+```
+
+**Comentários**
+- Hooks globais (via `RegisterBuildHooks`) e específicos por query (`WithHooks`) podem coexistir. As callbacks recebem o contexto usado na build, o SQL final, os argumentos e o `BuildReport` com métricas de duração e contagem de placeholders.
+- Erros retornados pelos hooks são ignorados para não bloquear a renderização; use-os para métricas, logs ou tracing.
+
+### 21. Hooks especializados (OpenTelemetry + slog)
+**Query**
+```go
+tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))
+mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+defer tp.Shutdown(context.Background())
+defer mp.Shutdown(context.Background())
+
+chizuql.RegisterBuildHooks(
+    hooks.TracingHook{Tracer: tp.Tracer("queries"), IncludeSQL: true},
+    &hooks.MetricsHook{Meter: mp.Meter("queries")},
+    hooks.LoggingHook{IncludeSQL: true},
+)
+
+ctx := context.WithValue(context.Background(), "traceparent", "00-abcdef0123456789abcdef0123456789-0123456789abcdef-01")
+
+sql, args, err := chizuql.New().
+    Select("id").
+    From("orders").
+    Where(chizuql.Col("status").Eq("paid")).
+    BuildContext(ctx)
+
+if err != nil {
+    panic(err)
+}
+
+fmt.Println(sql, args)
+```
+
+**Comentários**
+- `TracingHook` cria spans com `db.system`, contagem de argumentos e duração de renderização, opcionalmente incluindo o SQL em `db.statement`.
+- `MetricsHook` publica histogramas de duração (`chizuql.build.duration_ms`) e contadores de placeholders (`chizuql.build.args`) usando o `Meter` fornecido.
+- `LoggingHook` emite logs estruturados com `log/slog`, podendo anexar SQL e argumentos quando `IncludeSQL` estiver habilitado.

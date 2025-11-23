@@ -2,6 +2,8 @@ package chizuql
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -20,15 +22,119 @@ func assertBuild(t *testing.T, q *Query, wantSQL string, wantArgs []any) {
 	}
 }
 
-func TestBuildContextWithMetrics(t *testing.T) {
-	ctx := context.Background()
+func TestBuildHooks(t *testing.T) {
+	t.Cleanup(func() { SetGlobalBuildHooks() })
+
+	beforeCalls := 0
+	afterCalls := 0
+
+	var (
+		recordedSQL    string
+		recordedArgs   []any
+		recordedReport BuildReport
+	)
+
+	recordingHook := BuildHookFuncs{
+		Before: func(ctx context.Context, q *Query) error {
+			beforeCalls++
+
+			return nil
+		},
+		After: func(ctx context.Context, result BuildResult) error {
+			afterCalls++
+			recordedSQL = result.SQL
+			recordedArgs = result.Args
+			recordedReport = result.Report
+
+			return nil
+		},
+	}
+
+	RegisterBuildHooks(BuildHookFuncs{
+		Before: func(context.Context, *Query) error { return errors.New("before fail") },
+		After:  func(context.Context, BuildResult) error { return errors.New("after fail") },
+	})
+
+	q := New().
+		Select("id").
+		From("users").
+		Where(Col("id").Eq(42)).
+		WithHooks(recordingHook)
+
+	gotSQL, gotArgs := q.Build()
+
+	if gotSQL != "SELECT id FROM users WHERE (id = ?)" {
+		t.Fatalf("unexpected SQL: %s", gotSQL)
+	}
+
+	if !reflect.DeepEqual(gotArgs, []any{42}) {
+		t.Fatalf("unexpected args: %#v", gotArgs)
+	}
+
+	if beforeCalls != 1 {
+		t.Fatalf("expected before hook once, got %d", beforeCalls)
+	}
+
+	if afterCalls != 1 {
+		t.Fatalf("expected after hook once, got %d", afterCalls)
+	}
+
+	if recordedSQL != gotSQL {
+		t.Fatalf("after hook SQL mismatch: %s", recordedSQL)
+	}
+
+	if !reflect.DeepEqual(recordedArgs, gotArgs) {
+		t.Fatalf("after hook args mismatch: %#v", recordedArgs)
+	}
+
+	if recordedReport.ArgsCount != len(gotArgs) {
+		t.Fatalf("expected ArgsCount=%d, got %d", len(gotArgs), recordedReport.ArgsCount)
+	}
+
+	if recordedReport.DialectKind != dialectMySQL {
+		t.Fatalf("expected dialect %s, got %s", dialectMySQL, recordedReport.DialectKind)
+	}
+
+	if recordedReport.RenderDuration <= 0 {
+		t.Fatalf("expected positive render duration, got %s", recordedReport.RenderDuration)
+	}
+}
+
+func TestBuildContextWithTelemetryPropagation(t *testing.T) {
+	t.Cleanup(func() { SetGlobalBuildHooks() })
+
+	type ctxKey string
+
+	ctx := context.WithValue(context.Background(), ctxKey("traceparent"), "abc123")
 
 	q := New().
 		Select("id").
 		From("users").
 		Where(Col("id").Eq(99))
 
-	gotSQL, gotArgs, report, err := q.BuildContext(ctx)
+	var (
+		capturedContextValue any
+		report               BuildReport
+	)
+
+	RegisterBuildHooks(BuildHookFuncs{
+		Before: func(ctx context.Context, _ *Query) error {
+			capturedContextValue = ctx.Value(ctxKey("traceparent"))
+
+			return nil
+		},
+		After: func(ctx context.Context, result BuildResult) error {
+			if capturedContextValue == nil {
+				capturedContextValue = ctx.Value(ctxKey("traceparent"))
+			}
+
+			report = result.Report
+
+			return nil
+		},
+	})
+
+	gotSQL, gotArgs, err := q.BuildContext(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,6 +145,10 @@ func TestBuildContextWithMetrics(t *testing.T) {
 
 	if !reflect.DeepEqual(gotArgs, []any{99}) {
 		t.Fatalf("unexpected args: %#v", gotArgs)
+	}
+
+	if capturedContextValue != "abc123" {
+		t.Fatalf("expected context propagation, got %v", capturedContextValue)
 	}
 
 	if report.ArgsCount != 1 {
@@ -58,9 +168,41 @@ func TestBuildContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, _, err := New().Select("id").From("users").BuildContext(ctx)
+	_, _, err := New().Select("id").From("users").BuildContext(ctx)
 	if err == nil {
 		t.Fatalf("expected cancellation error")
+	}
+}
+
+func TestAfterHookReceivesOriginalArgsSlice(t *testing.T) {
+	t.Cleanup(func() { SetGlobalBuildHooks() })
+
+	var hookPtr string
+
+	RegisterBuildHooks(BuildHookFuncs{
+		After: func(_ context.Context, result BuildResult) error {
+			if len(result.Args) > 0 {
+				hookPtr = fmt.Sprintf("%p", &result.Args[0])
+			}
+
+			return nil
+		},
+	})
+
+	sql, args := New().Select("id").From("users").Where(Col("id").Eq(7)).Build()
+
+	if sql == "" {
+		t.Fatalf("expected SQL")
+	}
+
+	if len(args) == 0 {
+		t.Fatalf("expected args")
+	}
+
+	callPtr := fmt.Sprintf("%p", &args[0])
+
+	if hookPtr != callPtr {
+		t.Fatalf("hook received copied args slice: hook=%s build=%s", hookPtr, callPtr)
 	}
 }
 

@@ -5,18 +5,34 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
+- Nothing yet.
+
+### Changed
+- Nothing yet.
+
+### Fixed
+- Nothing yet.
+
+## [v0.6.0] - 2025-11-23
+
+### Added
 - Configuração do Renovate em `.github/renovate.json` para automatizar atualizações de dependências (Go modules e GitHub Actions) com painel dedicado.
 - Workflows de qualidade, estabilidade e segurança (`code-quality.yml`, `stability.yml`, `security.yml`) executando lint, testes e varredura CodeQL com Go 1.25.
 - Workflow de revisão de dependências (`vulnerability-scan.yml`) para checar vulnerabilidades em PRs utilizando `actions/dependency-review-action`.
+- Hooks de build globais e por query (BeforeBuild/AfterBuild) com callbacks opcionais, métricas no `BuildReport` e exemplos de instrumentação no README e em `examples/`.
+- Hooks especializados em OpenTelemetry (tracing e métricas) e logging (`log/slog`) disponíveis no pacote `hooks/`, com exemplos e cobertura de testes.
 
 ### Changed
 - Instruções do `AGENTS.md` reforçadas para evitar downgrade das versões das actions utilizadas nas pipelines de CI.
 - `AGENTS.md` agora orienta que qualquer alteração em `.golangci.yml` siga o schema oficial do `golangci-lint`.
 - `AGENTS.md` detalha as chaves permitidas para `wsl_v5` e para a raiz de `issues` conforme o schema do golangci-lint.
+- `BuildContext` agora retorna apenas SQL e args enquanto propaga o `context.Context` para os hooks; métricas permanecem disponíveis em `BuildResult` dentro dos callbacks.
+- Hooks agora recebem o slice de argumentos original; `BuildResult.Args` foi documentado como somente leitura para deixar explícito que ele não deve ser modificado durante a instrumentação.
 
 ### Fixed
 - Configuração do `.golangci.yml` realinhada com o schema oficial, mantendo `wsl_v5` e `issues` restritos às propriedades suportadas.
 - Campo `version` em `.golangci.yml` ajustado para usar string conforme o schema do `golangci-lint`.
+- Hook de tracing agora marca o span com o tempo real de renderização, evitando spans com duração zero.
 
 ## [v0.5.0] - 2025-11-23
 
