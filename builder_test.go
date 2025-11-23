@@ -201,6 +201,24 @@ func TestPostgresFullTextLanguage(t *testing.T) {
 	)
 }
 
+func TestDefaultTextSearchConfig(t *testing.T) {
+	previous := DefaultTextSearchConfig()
+
+	SetDefaultTextSearchConfig("simple")
+	t.Cleanup(func() { SetDefaultTextSearchConfig(previous) })
+
+	pg := New().
+		WithDialect(DialectPostgres).
+		Select("id").
+		From("posts").
+		Where(TsVector("title", "body").PlainQuery("seguro"))
+
+	assertBuild(t, pg,
+		"SELECT id FROM posts WHERE (to_tsvector('simple', CONCAT_WS(' ', title, body)) @@ plainto_tsquery('simple', $1))",
+		[]any{"seguro"},
+	)
+}
+
 func TestDialectSpecificFullTextSearchPanics(t *testing.T) {
 	assertPanicsWith(t, func() {
 		New().Select(TsVector("title").PlainQuery("oops")).From("posts").Build()
@@ -251,6 +269,23 @@ func TestAutomaticSubqueryAliases(t *testing.T) {
 
 	assertBuild(t, joined,
 		"SELECT subq_1.id, subq_2.total FROM (SELECT id FROM posts) AS subq_1 JOIN (SELECT post_id, COUNT(*) AS total FROM comments GROUP BY post_id) AS subq_2 ON (subq_1.id = subq_2.post_id)",
+		nil,
+	)
+}
+
+func TestUnionAllWithOrdering(t *testing.T) {
+	base := New().
+		Select("id", "title").
+		From("posts")
+
+	archived := New().
+		Select("id", "title").
+		From("archived_posts")
+
+	union := base.UnionAll(archived).OrderBy("id DESC").Limit(5)
+
+	assertBuild(t, union,
+		"SELECT id, title FROM posts UNION ALL (SELECT id, title FROM archived_posts) ORDER BY id DESC LIMIT 5",
 		nil,
 	)
 }

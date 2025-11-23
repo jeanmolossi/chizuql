@@ -3,6 +3,7 @@ package chizuql
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 func requireDialect(ctx *buildContext, expected dialectKind, feature string) {
@@ -18,6 +19,27 @@ func requireDialect(ctx *buildContext, expected dialectKind, feature string) {
 
 func escapeSingleQuotes(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
+}
+
+var (
+	defaultTextSearchConfig   = "english"
+	defaultTextSearchConfigMu sync.RWMutex
+)
+
+// SetDefaultTextSearchConfig replaces the package-wide default text search configuration used by TsVector builders.
+func SetDefaultTextSearchConfig(config string) {
+	defaultTextSearchConfigMu.Lock()
+	defer defaultTextSearchConfigMu.Unlock()
+
+	defaultTextSearchConfig = config
+}
+
+// DefaultTextSearchConfig returns the package-wide default text search configuration for TsVector builders.
+func DefaultTextSearchConfig() string {
+	defaultTextSearchConfigMu.RLock()
+	defer defaultTextSearchConfigMu.RUnlock()
+
+	return defaultTextSearchConfig
 }
 
 // Expression represents any fragment that can be embedded in SQL.
@@ -306,7 +328,7 @@ type TsVectorBuilder struct {
 
 // TsVector builds a to_tsvector expression using CONCAT_WS semantics.
 func TsVector(columns ...string) TsVectorBuilder {
-	return TsVectorBuilder{columns: columns, config: "english"}
+	return TsVectorBuilder{columns: columns, config: DefaultTextSearchConfig()}
 }
 
 // WithConfig overrides the text search configuration.

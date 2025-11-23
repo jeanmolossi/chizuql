@@ -94,6 +94,8 @@ type Query struct {
 
 	ctes []cte
 
+	unions []unionClause
+
 	selectColumns []Expression
 	distinct      bool
 
@@ -340,6 +342,36 @@ func (q *Query) WithRecursive(name string, subquery *Query, columns ...string) *
 	return q
 }
 
+// Union appends UNION operations with other SELECT queries.
+func (q *Query) Union(queries ...*Query) *Query { return q.union(false, queries...) }
+
+// UnionAll appends UNION ALL operations with other SELECT queries.
+func (q *Query) UnionAll(queries ...*Query) *Query { return q.union(true, queries...) }
+
+func (q *Query) union(all bool, queries ...*Query) *Query {
+	if q.qType != queryTypeSelect {
+		if q.qType == "" {
+			panic("UNION requer uma consulta SELECT inicial")
+		}
+
+		panic("UNION pode ser usado apenas em consultas SELECT")
+	}
+
+	for _, other := range queries {
+		if other == nil {
+			panic("UNION requer queries não nulas")
+		}
+
+		if other.qType != queryTypeSelect {
+			panic("UNION aceita apenas queries SELECT como operando")
+		}
+
+		q.unions = append(q.unions, unionClause{query: other, all: all})
+	}
+
+	return q
+}
+
 // Build renders the SQL string and the ordered arguments slice.
 func (q *Query) Build() (string, []any) {
 	dialect := q.dialect
@@ -365,7 +397,11 @@ func (q *Query) render(ctx *buildContext) string {
 
 	switch q.qType {
 	case queryTypeSelect:
-		q.buildSelect(&sql, ctx)
+		if len(q.unions) > 0 {
+			q.buildSetSelect(&sql, ctx)
+		} else {
+			q.buildSelect(&sql, ctx, true)
+		}
 	case queryTypeInsert:
 		q.buildInsert(&sql, ctx)
 	case queryTypeUpdate:
@@ -409,7 +445,7 @@ func (q *Query) writeCTEs(sql *strings.Builder, ctx *buildContext) {
 	sql.WriteString(" ")
 }
 
-func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
+func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext, includeOrdering bool) {
 	sql.WriteString("SELECT ")
 
 	if q.distinct {
@@ -453,6 +489,30 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
 
 	q.buildPredicates(sql, ctx, "HAVING", q.having)
 
+	if includeOrdering {
+		q.appendOrdering(sql, ctx)
+	}
+}
+
+func (q *Query) buildSetSelect(sql *strings.Builder, ctx *buildContext) {
+	q.buildSelect(sql, ctx, false)
+
+	for _, u := range q.unions {
+		sql.WriteString(" ")
+
+		if u.all {
+			sql.WriteString("UNION ALL ")
+		} else {
+			sql.WriteString("UNION ")
+		}
+
+		sql.WriteString(u.query.renderSetOperand(ctx))
+	}
+
+	q.appendOrdering(sql, ctx)
+}
+
+func (q *Query) appendOrdering(sql *strings.Builder, ctx *buildContext) {
 	if len(q.orderBy) > 0 {
 		parts := make([]string, 0, len(q.orderBy))
 		for _, o := range q.orderBy {
@@ -470,6 +530,28 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
 	if q.offset != nil {
 		fmt.Fprintf(sql, " OFFSET %d", *q.offset)
 	}
+}
+
+func (q *Query) renderSetOperand(ctx *buildContext) string {
+	if q == nil {
+		panic("UNION requer queries não nulas")
+	}
+
+	if q.qType != queryTypeSelect {
+		panic("UNION aceita apenas queries SELECT como operando")
+	}
+
+	sb := strings.Builder{}
+	sb.WriteString("(")
+
+	if len(q.ctes) > 0 {
+		q.writeCTEs(&sb, ctx)
+	}
+
+	q.buildSelect(&sb, ctx, false)
+	sb.WriteString(")")
+
+	return sb.String()
 }
 
 func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
@@ -618,6 +700,11 @@ func (q *Query) writeOnConflict(sql *strings.Builder, ctx *buildContext) {
 type SetClause struct {
 	column string
 	value  Expression
+}
+
+type unionClause struct {
+	query *Query
+	all   bool
 }
 
 // Set defines a column assignment for UPDATE queries.

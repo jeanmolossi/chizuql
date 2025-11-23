@@ -75,6 +75,24 @@ del := chizuql.New().
 sql, args := del.Build()
 ```
 
+### UNION/UNION ALL com ordenação final
+```go
+recent := chizuql.New().
+    Select("id", "title").
+    From("posts")
+
+archived := chizuql.New().
+    Select("id", "title").
+    From("archived_posts")
+
+union := recent.
+    UnionAll(archived).
+    OrderBy("id DESC").
+    Limit(5)
+
+sql, args := union.Build()
+```
+
 ### Buscas textuais
 ```go
 // MySQL
@@ -145,6 +163,7 @@ sql, args := raw.Build()
 - Suporte a `RETURNING`
 - Builders de busca textual para MySQL (`MATCH ... AGAINST`) e PostgreSQL (`to_tsvector` + `websearch_to_tsquery` ou `plainto_tsquery`)
 - Extração e filtros JSON/JSONB com paths parametrizados e compatíveis com MySQL/PostgreSQL
+- Combinação de consultas com `UNION`/`UNION ALL` e ordenação/paginação finais
 - Subconsultas em FROM/JOIN recebem aliases automáticos (`subq_1`, `subq_2`, ...) quando omitidos
 - Geração de SQL parametrizado com placeholders ajustados por dialeto (`?` para MySQL, `$1` para PostgreSQL)
 
@@ -154,6 +173,20 @@ Escolha o dialeto com `WithDialect`, que alterna automaticamente os placeholders
 Cláusulas de busca textual são específicas de dialeto: `MATCH ... AGAINST` só funciona com o dialeto MySQL e `TsVector`/`ts_rank` são exclusivos do dialeto PostgreSQL.
 
 Para alternar o idioma/configuração no PostgreSQL, utilize `WithLanguage` (ou `WithConfig`) nos builders `TsVector`, que escapam os nomes de configuração automaticamente.
+
+Caso deseje outro idioma padrão para novas buscas textuais em PostgreSQL, configure-o globalmente (com escapes aplicados na renderização):
+
+```go
+chizuql.SetDefaultTextSearchConfig("portuguese")
+
+sql, _ := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    Select("id").
+    From("posts").
+    Where(chizuql.TsVector("title").WebSearch("busca segura")).
+    Build()
+// SELECT id FROM posts WHERE (to_tsvector('portuguese', title) @@ websearch_to_tsquery('portuguese', $1))
+```
 
 Subconsultas em `FROM`/`JOIN` recebem aliases gerados automaticamente (`subq_1`, `subq_2`, ...) quando omitidos, garantindo SQL válido em dialetos que exigem nomeação.
 
@@ -186,7 +219,7 @@ ci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.6.2` (mais op
 - [x] Expandir helpers de busca textual com ranking e ordenação por relevância.
 - [x] Incluir suporte a aliases automáticos para subconsultas aninhadas.
 - [x] Adicionar geração de SQL parametrizado para cláusulas `JSON`/`JSONB`.
-- [ ] Suportar construção de `UNION`/`UNION ALL` com controle de ordenação.
+- [x] Suportar construção de `UNION`/`UNION ALL` com controle de ordenação.
 - [ ] Permitir `WITH ORDINALITY` em CTEs e funções set-returning no PostgreSQL.
 - [ ] Introduzir API para window functions (`OVER`, partitions, frames).
 - [ ] Oferecer builders para `GROUPING SETS`/`CUBE`/`ROLLUP`.
@@ -196,6 +229,7 @@ ci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.6.2` (mais op
 - [ ] Documentar exemplos de integração com ORMs (GORM, sqlc) e migrações.
 - [ ] Suportar optimizer hints/hints de planner específicos por dialeto.
 - [ ] Oferecer helpers para paginação por cursor (keyset pagination) na API fluente.
+- [ ] Adicionar builders para `INTERSECT`/`EXCEPT` com ordenação e paginação em nível de conjunto.
 
 ## Licença
 MIT

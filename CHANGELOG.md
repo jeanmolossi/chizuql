@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file. The format 
 - Alternância de idioma/configuração para buscas textuais PostgreSQL via `TsVector.WithLanguage` (compatível com `WithConfig`).
 - Aliases automáticos para subconsultas em `FROM`/`JOIN`, garantindo SQL válido em dialetos que exigem nomeação.
 - Helpers parametrizados para JSON/JSONB (`JSONExtract`, `JSONExtractText`, `JSONContains`) compatíveis com MySQL e PostgreSQL.
+- Configuração global do idioma padrão para buscas textuais PostgreSQL via `SetDefaultTextSearchConfig`.
+- Combinação de consultas com `UNION`/`UNION ALL` e ordenação/paginação finais.
 
 ### Changed
 - Cláusulas de busca textual agora validam o dialeto selecionado, impedindo `MATCH ... AGAINST` em PostgreSQL e `TsVector` em MySQL.
