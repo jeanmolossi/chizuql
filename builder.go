@@ -28,6 +28,16 @@ const (
 	dialectPostgres dialectKind = "postgres"
 )
 
+// MySQLReturningMode configures how RETURNING behaves for MySQL builds.
+type MySQLReturningMode int
+
+const (
+	// MySQLReturningStrict always renders RETURNING, assuming MySQL 8.0+ support.
+	MySQLReturningStrict MySQLReturningMode = iota
+	// MySQLReturningOmit silently removes RETURNING for MySQL builds, useful for older servers.
+	MySQLReturningOmit
+)
+
 type sqlDialect struct {
 	kind dialectKind
 }
@@ -65,6 +75,9 @@ var (
 
 	defaultDialect   Dialect = DialectMySQL
 	defaultDialectMu sync.RWMutex
+
+	defaultMySQLReturningMode   MySQLReturningMode = MySQLReturningStrict
+	defaultMySQLReturningModeMu sync.RWMutex
 )
 
 // SetDefaultDialect replaces the package-wide default dialect used by newly created queries.
@@ -83,11 +96,29 @@ func DefaultDialect() Dialect {
 	return defaultDialect
 }
 
+// SetDefaultMySQLReturningMode replaces the package-wide default RETURNING strategy for MySQL builds.
+func SetDefaultMySQLReturningMode(mode MySQLReturningMode) {
+	defaultMySQLReturningModeMu.Lock()
+	defer defaultMySQLReturningModeMu.Unlock()
+
+	defaultMySQLReturningMode = mode
+}
+
+// DefaultMySQLReturningMode returns the package-wide RETURNING strategy for MySQL builds.
+func DefaultMySQLReturningMode() MySQLReturningMode {
+	defaultMySQLReturningModeMu.RLock()
+	defer defaultMySQLReturningModeMu.RUnlock()
+
+	return defaultMySQLReturningMode
+}
+
 // Query represents a composable SQL query built using the fluent API.
 type Query struct {
 	qType queryType
 
 	dialect Dialect
+
+	mysqlReturningMode MySQLReturningMode
 
 	rawSQL  string
 	rawArgs []any
@@ -128,7 +159,7 @@ type Query struct {
 
 // New returns a fresh Query instance ready to be composed.
 func New() *Query {
-	return &Query{dialect: DefaultDialect()}
+	return &Query{dialect: DefaultDialect(), mysqlReturningMode: DefaultMySQLReturningMode()}
 }
 
 // RawQuery builds a query directly from the provided SQL fragment and arguments.
@@ -139,6 +170,13 @@ func RawQuery(sql string, args ...any) *Query {
 // WithDialect sets the SQL dialect for placeholder and conflict rendering.
 func (q *Query) WithDialect(d Dialect) *Query {
 	q.dialect = d
+
+	return q
+}
+
+// WithMySQLReturningMode configures how RETURNING is rendered when using the MySQL dialect.
+func (q *Query) WithMySQLReturningMode(mode MySQLReturningMode) *Query {
+	q.mysqlReturningMode = mode
 
 	return q
 }
@@ -389,7 +427,7 @@ func (q *Query) Build() (string, []any) {
 		dialect = DefaultDialect()
 	}
 
-	ctx := &buildContext{dialect: dialect}
+	ctx := &buildContext{dialect: dialect, mysqlReturning: q.mysqlReturningMode}
 	sql := strings.TrimSpace(q.render(ctx))
 
 	return sql, ctx.args
@@ -659,6 +697,10 @@ func (q *Query) writeReturning(sql *strings.Builder, ctx *buildContext) {
 		return
 	}
 
+	if kind, ok := dialectKindOf(ctx.dialect); ok && kind == dialectMySQL && ctx.mysqlReturning == MySQLReturningOmit {
+		return
+	}
+
 	parts := make([]string, 0, len(q.returning))
 	for _, r := range q.returning {
 		parts = append(parts, r.build(ctx))
@@ -739,6 +781,7 @@ type buildContext struct {
 	placeholderIndex int
 	subqueryAlias    int
 	subqueryAliases  map[*Query]string
+	mysqlReturning   MySQLReturningMode
 }
 
 // nextPlaceholder appends the provided argument and returns the placeholder symbol.

@@ -10,8 +10,13 @@ All notable changes to this project will be documented in this file. The format 
 - API de window functions (`Func(...).Over`, `Window`, frames `ROWS/RANGE`, `PartitionBy`/`OrderBy`) com novos helpers de limites de frame.
 - Exemplos extras cobrindo window functions, `WITH ORDINALITY`, ordenação por colunas (`Asc`/`Desc`) e variações adicionais de consultas.
 - Diretriz explícita no `AGENTS.md` exigindo que novas features venham acompanhadas de exemplos em `examples/`.
+- Predicados `Between`/`NotBetween` e exemplos de uso no builder.
+- Builders de agrupamento `GroupingSets`, `GroupSet`, `Rollup` e `Cube` para `GROUP BY` avançado.
+- Configuração `WithMySQLReturningMode` com modo de fallback (`MySQLReturningOmit`) para omitir `RETURNING` em MySQL antigos.
+- Exemplos adicionais cobrindo BETWEEN, grouping sets, rollup/cube e uso de `RETURNING` condicionado em MySQL.
 
 ### Changed
+- Roadmap atualizado com as duas próximas tarefas concluídas (GROUPING SETS e RETURNING no MySQL) mantendo pendências abertas.
 
 ## [v0.2.0] - 2025-11-23
 ### Added

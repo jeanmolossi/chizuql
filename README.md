@@ -156,12 +156,58 @@ raw := chizuql.RawQuery("SELECT now()")
 sql, args := raw.Build()
 ```
 
+### Filtros com BETWEEN/NOT BETWEEN
+```go
+q := chizuql.New().
+    Select("id", "occurred_at", "status").
+    From("events").
+    Where(
+        chizuql.Col("occurred_at").Between("2024-01-01", "2024-02-01"),
+        chizuql.Col("status").NotBetween("archived", "zzz"),
+    )
+
+sql, args := q.Build()
+```
+
+### Agrupamentos avançados
+```go
+q := chizuql.New().
+    Select("region", "channel", chizuql.Raw("SUM(amount) AS total")).
+    From("sales").
+    GroupBy(
+        chizuql.GroupingSets(
+            chizuql.GroupSet("region"),
+            chizuql.GroupSet("channel"),
+            chizuql.GroupSet(), // total geral
+        ),
+        chizuql.Rollup("region", "channel"),
+    ).
+    OrderBy("total DESC")
+
+sql, args := q.Build()
+```
+
+### RETURNING no MySQL com fallback configurável
+```go
+// Renderiza RETURNING (MySQL 8.0+) ou omite a cláusula para versões antigas
+update := chizuql.New().
+    WithDialect(chizuql.DialectMySQL).
+    WithMySQLReturningMode(chizuql.MySQLReturningOmit). // troque para MySQLReturningStrict em servidores 8.0+
+    Update("users").
+    Set(chizuql.Set("name", "Ana")).
+    Where(chizuql.Col("id").Eq(1)).
+    Returning("id")
+
+sql, args := update.Build()
+```
+
 ## Recursos principais
 - SELECT, INSERT, UPDATE, DELETE com cláusulas fluentes
 - JOINs, subqueries e CTEs (`WITH` e `WITH RECURSIVE`)
 - Predicados compostos (`AND`/`OR`), `IN`, `BETWEEN`, `LIKE`, `IS NULL`
 - Comparação entre colunas e uso de expressões cruas com `Raw`
 - Suporte a `RETURNING`
+- Agrupamentos avançados (`GROUPING SETS`, `ROLLUP`, `CUBE`) e window functions com frames
 - Builders de busca textual para MySQL (`MATCH ... AGAINST`) e PostgreSQL (`to_tsvector` + `websearch_to_tsquery` ou `plainto_tsquery`)
 - Extração e filtros JSON/JSONB com paths parametrizados e compatíveis com MySQL/PostgreSQL
 - Combinação de consultas com `UNION`/`UNION ALL` e ordenação/paginação finais
@@ -170,6 +216,8 @@ sql, args := raw.Build()
 
 ## Compatibilidade
 Escolha o dialeto com `WithDialect`, que alterna automaticamente os placeholders entre `?` (MySQL) e `$n` (PostgreSQL) enquanto mantém o rastreamento de argumentos.
+
+Em servidores MySQL anteriores à 8.0, utilize `WithMySQLReturningMode(MySQLReturningOmit)` para suprimir `RETURNING` em consultas DML; o modo padrão (`MySQLReturningStrict`) mantém a cláusula para ambientes que já suportam o recurso.
 
 Cláusulas de busca textual são específicas de dialeto: `MATCH ... AGAINST` só funciona com o dialeto MySQL e `TsVector`/`ts_rank` são exclusivos do dialeto PostgreSQL.
 
@@ -227,8 +275,8 @@ sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("i
 - [x] Suportar construção de `UNION`/`UNION ALL` com controle de ordenação.
 - [x] Permitir `WITH ORDINALITY` em CTEs e funções set-returning no PostgreSQL.
 - [x] Introduzir API para window functions (`OVER`, partitions, frames).
-- [ ] Oferecer builders para `GROUPING SETS`/`CUBE`/`ROLLUP`.
-- [ ] Implementar suporte a `RETURNING` no MySQL 8.0+ (quando disponível) com fallback configurável.
+- [x] Oferecer builders para `GROUPING SETS`/`CUBE`/`ROLLUP`.
+- [x] Implementar suporte a `RETURNING` no MySQL 8.0+ (quando disponível) com fallback configurável.
 - [ ] Adicionar helpers para `LOCK IN SHARE MODE`/`FOR UPDATE` conforme dialeto.
 - [ ] Criar integração com contextos para cancelar build longo e medir métricas.
 - [ ] Documentar exemplos de integração com ORMs (GORM, sqlc) e migrações.

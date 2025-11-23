@@ -360,3 +360,93 @@ args: []
 - `Window()` compõe `PARTITION BY`, `ORDER BY` e frames `ROWS`/`RANGE` de forma declarativa.
 - `Func(...).Over(spec)` funciona para qualquer função agregada ou analítica, incluindo aliases ou expressões mais complexas.
 - Frames aceitam limites como `UnboundedPreceding`, `CurrentRow`, `Preceding(n)` e `Following(n)` para personalizar janelas.
+
+### 13. Filtros com BETWEEN e NOT BETWEEN
+**Query**
+```go
+q := chizuql.New().
+    Select("id", "occurred_at", "status").
+    From("events").
+    Where(
+        chizuql.Col("occurred_at").Between("2024-01-01", "2024-02-01"),
+        chizuql.Col("status").NotBetween("archived", "zzz"),
+    )
+
+sql, args := q.Build()
+```
+
+**Saída gerada**
+```
+SELECT id, occurred_at, status FROM events WHERE (occurred_at BETWEEN ? AND ? AND status NOT BETWEEN ? AND ?)
+args: ["2024-01-01" "2024-02-01" "archived" "zzz"]
+```
+
+**Comentários**
+- `Between` e `NotBetween` aceitam qualquer expressão, inclusive `Raw` ou subconsultas.
+- Vários predicados informados em `Where` continuam agrupados por `AND`.
+
+### 14. Agrupamentos avançados com GROUPING SETS e ROLLUP
+**Query**
+```go
+q := chizuql.New().
+    Select("region", "channel", chizuql.Raw("SUM(amount) AS total")).
+    From("sales").
+    GroupBy(
+        chizuql.GroupingSets(
+            chizuql.GroupSet("region"),
+            chizuql.GroupSet("channel"),
+            chizuql.GroupSet(), // total geral
+        ),
+        chizuql.Rollup("region", "channel"),
+    ).
+    Having(chizuql.Col("total").Gt(1000)).
+    OrderBy("total DESC")
+
+sql, args := q.Build()
+```
+
+**Saída gerada**
+```
+SELECT region, channel, SUM(amount) AS total FROM sales GROUP BY GROUPING SETS ((region), (channel), ()), ROLLUP (region, channel) HAVING (total > ?) ORDER BY total DESC
+args: [1000]
+```
+
+**Comentários**
+- `GroupingSets` aceita uma lista de `GroupSet` (incluindo o conjunto vazio `()` para totalizações gerais).
+- `Rollup` gera totais acumulados na ordem informada.
+- É possível combinar `GroupingSets`, `Rollup` e colunas comuns na mesma cláusula `GROUP BY`.
+
+### 15. CUBE e controle de RETURNING no MySQL
+**Query**
+```go
+cube := chizuql.New().
+    Select("category", "region", chizuql.Raw("SUM(amount) AS sum_amount")).
+    From("sales").
+    GroupBy(chizuql.Cube("category", "region"))
+
+// UPDATE com RETURNING desabilitado para MySQL abaixo da 8.0
+update := chizuql.New().
+    WithDialect(chizuql.DialectMySQL).
+    WithMySQLReturningMode(chizuql.MySQLReturningOmit).
+    Update("users").
+    Set(chizuql.Set("name", "Ana")).
+    Where(chizuql.Col("id").Eq(1)).
+    Returning("id")
+
+cubeSQL, cubeArgs := cube.Build()
+updateSQL, updateArgs := update.Build()
+```
+
+**Saída gerada**
+```
+SELECT category, region, SUM(amount) AS sum_amount FROM sales GROUP BY CUBE (category, region)
+args: []
+
+UPDATE users SET name = ? WHERE (id = ?)
+args: ["Ana" 1]
+```
+
+**Comentários**
+- `Cube` cria todas as combinações possíveis entre as colunas informadas.
+- `WithMySQLReturningMode(MySQLReturningOmit)` remove `RETURNING` para dialetos MySQL, evitando erros em servidores que não suportam a cláusula.
+- Para MySQL 8.0+, mantenha o modo padrão (`MySQLReturningStrict`) e a cláusula `RETURNING` será emitida normalmente.

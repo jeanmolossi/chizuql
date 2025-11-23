@@ -117,6 +117,11 @@ func (c Column) Between(start, end any) Predicate {
 	return betweenPredicate{left: c, start: toValueExpression(start), end: toValueExpression(end)}
 }
 
+// NotBetween builds a NOT BETWEEN predicate.
+func (c Column) NotBetween(start, end any) Predicate {
+	return betweenPredicate{left: c, start: toValueExpression(start), end: toValueExpression(end), not: true}
+}
+
 // Like builds a LIKE predicate.
 func (c Column) Like(value any) Predicate {
 	return comparison{left: c, op: "LIKE", right: toValueExpression(value)}
@@ -207,10 +212,16 @@ type betweenPredicate struct {
 	left  Expression
 	start Expression
 	end   Expression
+	not   bool
 }
 
 func (b betweenPredicate) build(ctx *buildContext) string {
-	return fmt.Sprintf("%s BETWEEN %s AND %s", b.left.build(ctx), b.start.build(ctx), b.end.build(ctx))
+	keyword := "BETWEEN"
+	if b.not {
+		keyword = "NOT BETWEEN"
+	}
+
+	return fmt.Sprintf("%s %s %s AND %s", b.left.build(ctx), keyword, b.start.build(ctx), b.end.build(ctx))
 }
 
 // unaryPredicate represents predicates without right operand.
@@ -648,6 +659,87 @@ func (j jsonContainsPredicate) build(ctx *buildContext) string {
 	default:
 		panic("JSON_CONTAINS não suportado para este dialeto")
 	}
+}
+
+// GroupingSet represents a grouping set clause.
+type GroupingSet struct {
+	elements []Expression
+}
+
+// GroupSet creates a grouping set from the provided expressions.
+func GroupSet(expressions ...any) GroupingSet {
+	return GroupingSet{elements: toSQLExpressions(expressions...)}
+}
+
+// GroupingSets builds a GROUPING SETS clause combining multiple grouping sets.
+func GroupingSets(sets ...GroupingSet) Expression {
+	return groupingSetsExpr{sets: sets}
+}
+
+// Rollup builds a ROLLUP grouping element.
+func Rollup(expressions ...any) Expression {
+	if len(expressions) == 0 {
+		panic("ROLLUP requer ao menos uma expressão")
+	}
+
+	return rollupExpr{elements: toSQLExpressions(expressions...)}
+}
+
+// Cube builds a CUBE grouping element.
+func Cube(expressions ...any) Expression {
+	if len(expressions) == 0 {
+		panic("CUBE requer ao menos uma expressão")
+	}
+
+	return cubeExpr{elements: toSQLExpressions(expressions...)}
+}
+
+type groupingSetsExpr struct {
+	sets []GroupingSet
+}
+
+func (g groupingSetsExpr) build(ctx *buildContext) string {
+	if len(g.sets) == 0 {
+		panic("GROUPING SETS requer ao menos um agrupamento")
+	}
+
+	parts := make([]string, 0, len(g.sets))
+	for _, set := range g.sets {
+		items := make([]string, 0, len(set.elements))
+		for _, e := range set.elements {
+			items = append(items, e.build(ctx))
+		}
+
+		parts = append(parts, fmt.Sprintf("(%s)", strings.Join(items, ", ")))
+	}
+
+	return fmt.Sprintf("GROUPING SETS (%s)", strings.Join(parts, ", "))
+}
+
+type rollupExpr struct {
+	elements []Expression
+}
+
+func (r rollupExpr) build(ctx *buildContext) string {
+	parts := make([]string, 0, len(r.elements))
+	for _, e := range r.elements {
+		parts = append(parts, e.build(ctx))
+	}
+
+	return fmt.Sprintf("ROLLUP (%s)", strings.Join(parts, ", "))
+}
+
+type cubeExpr struct {
+	elements []Expression
+}
+
+func (c cubeExpr) build(ctx *buildContext) string {
+	parts := make([]string, 0, len(c.elements))
+	for _, e := range c.elements {
+		parts = append(parts, e.build(ctx))
+	}
+
+	return fmt.Sprintf("CUBE (%s)", strings.Join(parts, ", "))
 }
 
 type orderedExpr struct {

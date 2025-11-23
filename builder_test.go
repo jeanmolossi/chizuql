@@ -52,6 +52,21 @@ func TestJoinGroupHaving(t *testing.T) {
 	)
 }
 
+func TestBetweenPredicates(t *testing.T) {
+	q := New().
+		Select("id").
+		From("events").
+		Where(
+			Col("occurred_at").Between("2024-01-01", "2024-02-01"),
+			Col("status").NotBetween("archived", "z"),
+		)
+
+	assertBuild(t, q,
+		"SELECT id FROM events WHERE (occurred_at BETWEEN ? AND ? AND status NOT BETWEEN ? AND ?)",
+		[]any{"2024-01-01", "2024-02-01", "archived", "z"},
+	)
+}
+
 func TestInsertReturning(t *testing.T) {
 	q := New().
 		InsertInto("users", "name", "email").
@@ -62,6 +77,21 @@ func TestInsertReturning(t *testing.T) {
 	assertBuild(t, q,
 		"INSERT INTO users (name, email) VALUES (?, ?), (?, ?) RETURNING id",
 		[]any{"Jane", "jane@example.com", "John", "john@example.com"},
+	)
+}
+
+func TestMySQLReturningOmitted(t *testing.T) {
+	q := New().
+		WithDialect(DialectMySQL).
+		WithMySQLReturningMode(MySQLReturningOmit).
+		Update("users").
+		Set(Set("name", "Ana")).
+		Where(Col("id").Eq(1)).
+		Returning("id")
+
+	assertBuild(t, q,
+		"UPDATE users SET name = ? WHERE (id = ?)",
+		[]any{"Ana", 1},
 	)
 }
 
@@ -114,6 +144,37 @@ func TestMixedRecursiveCTEs(t *testing.T) {
 
 	assertBuild(t, q,
 		"WITH RECURSIVE base AS (SELECT id FROM users), tree AS (SELECT id FROM nodes) SELECT id FROM base",
+		nil,
+	)
+}
+
+func TestGroupingSetsRollupAndCube(t *testing.T) {
+	sales := New().
+		Select("region", "channel", Raw("SUM(amount) AS total")).
+		From("sales").
+		GroupBy(
+			GroupingSets(
+				GroupSet("region"),
+				GroupSet("channel"),
+				GroupSet(),
+			),
+			Rollup("region", "channel"),
+		).
+		Having(Col("total").Gt(1000)).
+		OrderBy("total DESC")
+
+	assertBuild(t, sales,
+		"SELECT region, channel, SUM(amount) AS total FROM sales GROUP BY GROUPING SETS ((region), (channel), ()), ROLLUP (region, channel) HAVING (total > ?) ORDER BY total DESC",
+		[]any{1000},
+	)
+
+	cube := New().
+		Select("category", "region", Raw("SUM(amount) AS sum_amount")).
+		From("sales").
+		GroupBy(Cube("category", "region"))
+
+	assertBuild(t, cube,
+		"SELECT category, region, SUM(amount) AS sum_amount FROM sales GROUP BY CUBE (category, region)",
 		nil,
 	)
 }
