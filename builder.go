@@ -1,9 +1,11 @@
 package chizuql
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 type queryType string
@@ -27,6 +29,28 @@ const (
 	dialectMySQL    dialectKind = "mysql"
 	dialectPostgres dialectKind = "postgres"
 )
+
+// MySQLReturningMode configures how RETURNING behaves for MySQL builds.
+type MySQLReturningMode int
+
+const (
+	// MySQLReturningStrict always renders RETURNING, assuming MySQL 8.0+ support.
+	MySQLReturningStrict MySQLReturningMode = iota
+	// MySQLReturningOmit silently removes RETURNING for MySQL builds, useful for older servers.
+	MySQLReturningOmit
+)
+
+type lockMode int
+
+const (
+	lockNone lockMode = iota
+	lockForUpdate
+	lockShare
+)
+
+type lockClause struct {
+	mode lockMode
+}
 
 type sqlDialect struct {
 	kind dialectKind
@@ -65,6 +89,9 @@ var (
 
 	defaultDialect   Dialect = DialectMySQL
 	defaultDialectMu sync.RWMutex
+
+	defaultMySQLReturningMode   MySQLReturningMode = MySQLReturningStrict
+	defaultMySQLReturningModeMu sync.RWMutex
 )
 
 // SetDefaultDialect replaces the package-wide default dialect used by newly created queries.
@@ -83,11 +110,29 @@ func DefaultDialect() Dialect {
 	return defaultDialect
 }
 
+// SetDefaultMySQLReturningMode replaces the package-wide default RETURNING strategy for MySQL builds.
+func SetDefaultMySQLReturningMode(mode MySQLReturningMode) {
+	defaultMySQLReturningModeMu.Lock()
+	defer defaultMySQLReturningModeMu.Unlock()
+
+	defaultMySQLReturningMode = mode
+}
+
+// DefaultMySQLReturningMode returns the package-wide RETURNING strategy for MySQL builds.
+func DefaultMySQLReturningMode() MySQLReturningMode {
+	defaultMySQLReturningModeMu.RLock()
+	defer defaultMySQLReturningModeMu.RUnlock()
+
+	return defaultMySQLReturningMode
+}
+
 // Query represents a composable SQL query built using the fluent API.
 type Query struct {
 	qType queryType
 
 	dialect Dialect
+
+	mysqlReturningMode MySQLReturningMode
 
 	rawSQL  string
 	rawArgs []any
@@ -124,11 +169,23 @@ type Query struct {
 	deleteTable TableExpression
 
 	returning []Expression
+
+	lock lockClause
+}
+
+// BuildReport captures metrics from query rendering.
+type BuildReport struct {
+	// RenderDuration is the total time spent generating SQL and arguments.
+	RenderDuration time.Duration
+	// ArgsCount is the number of placeholders/arguments emitted.
+	ArgsCount int
+	// DialectKind is the dialect that was used for rendering.
+	DialectKind dialectKind
 }
 
 // New returns a fresh Query instance ready to be composed.
 func New() *Query {
-	return &Query{dialect: DefaultDialect()}
+	return &Query{dialect: DefaultDialect(), mysqlReturningMode: DefaultMySQLReturningMode()}
 }
 
 // RawQuery builds a query directly from the provided SQL fragment and arguments.
@@ -139,6 +196,13 @@ func RawQuery(sql string, args ...any) *Query {
 // WithDialect sets the SQL dialect for placeholder and conflict rendering.
 func (q *Query) WithDialect(d Dialect) *Query {
 	q.dialect = d
+
+	return q
+}
+
+// WithMySQLReturningMode configures how RETURNING is rendered when using the MySQL dialect.
+func (q *Query) WithMySQLReturningMode(mode MySQLReturningMode) *Query {
+	q.mysqlReturningMode = mode
 
 	return q
 }
@@ -301,6 +365,24 @@ func (q *Query) OrderBy(expressions ...any) *Query {
 	return q
 }
 
+// ForUpdate appends a FOR UPDATE lock to the SELECT statement.
+func (q *Query) ForUpdate() *Query {
+	q.ensureLockable()
+
+	q.lock = lockClause{mode: lockForUpdate}
+
+	return q
+}
+
+// LockInShareMode appends a shared lock clause (dialect-aware) to the SELECT statement.
+func (q *Query) LockInShareMode() *Query {
+	q.ensureLockable()
+
+	q.lock = lockClause{mode: lockShare}
+
+	return q
+}
+
 // Limit sets a LIMIT clause.
 func (q *Query) Limit(limit int) *Query {
 	if len(q.unions) > 0 {
@@ -389,10 +471,44 @@ func (q *Query) Build() (string, []any) {
 		dialect = DefaultDialect()
 	}
 
-	ctx := &buildContext{dialect: dialect}
+	ctx := &buildContext{dialect: dialect, mysqlReturning: q.mysqlReturningMode}
 	sql := strings.TrimSpace(q.render(ctx))
 
 	return sql, ctx.args
+}
+
+// BuildContext renders SQL and arguments honoring cancellation and returning basic metrics.
+func (q *Query) BuildContext(ctx context.Context) (string, []any, BuildReport, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if err := ctx.Err(); err != nil {
+		return "", nil, BuildReport{}, err
+	}
+
+	dialect := q.dialect
+	if dialect == nil {
+		dialect = DefaultDialect()
+	}
+
+	buildCtx := &buildContext{dialect: dialect, mysqlReturning: q.mysqlReturningMode}
+	start := time.Now()
+	sql := strings.TrimSpace(q.render(buildCtx))
+	report := BuildReport{
+		RenderDuration: time.Since(start),
+		ArgsCount:      len(buildCtx.args),
+	}
+
+	if inspected, ok := dialectKindOf(dialect); ok {
+		report.DialectKind = inspected
+	}
+
+	if err := ctx.Err(); err != nil {
+		return "", nil, BuildReport{}, err
+	}
+
+	return sql, buildCtx.args, report, nil
 }
 
 func (q *Query) render(ctx *buildContext) string {
@@ -400,6 +516,10 @@ func (q *Query) render(ctx *buildContext) string {
 		ctx.args = append(ctx.args, q.rawArgs...)
 
 		return q.rawSQL
+	}
+
+	if q.lock.mode != lockNone && len(q.unions) > 0 {
+		panic("row-level locks não são suportados em consultas UNION/UNION ALL")
 	}
 
 	sql := strings.Builder{}
@@ -504,6 +624,7 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext, includeOrde
 	}
 
 	q.appendPagination(sql, q.limit, q.offset)
+	q.appendLock(sql, ctx)
 }
 
 func (q *Query) buildSetSelect(sql *strings.Builder, ctx *buildContext) {
@@ -524,6 +645,7 @@ func (q *Query) buildSetSelect(sql *strings.Builder, ctx *buildContext) {
 	q.appendOrdering(sql, ctx)
 
 	q.appendPagination(sql, q.setLimit, q.setOffset)
+	q.appendLock(sql, ctx)
 }
 
 func (q *Query) appendOrdering(sql *strings.Builder, ctx *buildContext) {
@@ -567,6 +689,33 @@ func (q *Query) appendPagination(sql *strings.Builder, limit *int, offset *int) 
 
 	if offset != nil {
 		fmt.Fprintf(sql, " OFFSET %d", *offset)
+	}
+}
+
+func (q *Query) appendLock(sql *strings.Builder, ctx *buildContext) {
+	if q.lock.mode == lockNone {
+		return
+	}
+
+	switch q.lock.mode {
+	case lockForUpdate:
+		sql.WriteString(" FOR UPDATE")
+	case lockShare:
+		if kind, ok := dialectKindOf(ctx.dialect); ok && kind == dialectMySQL {
+			sql.WriteString(" LOCK IN SHARE MODE")
+		} else {
+			sql.WriteString(" FOR SHARE")
+		}
+	}
+}
+
+func (q *Query) ensureLockable() {
+	if q.qType != queryTypeSelect {
+		panic("row-level locks estão disponíveis apenas para consultas SELECT")
+	}
+
+	if len(q.unions) > 0 {
+		panic("row-level locks não são suportados em consultas UNION/UNION ALL")
 	}
 }
 
@@ -659,6 +808,10 @@ func (q *Query) writeReturning(sql *strings.Builder, ctx *buildContext) {
 		return
 	}
 
+	if kind, ok := dialectKindOf(ctx.dialect); ok && kind == dialectMySQL && ctx.mysqlReturning == MySQLReturningOmit {
+		return
+	}
+
 	parts := make([]string, 0, len(q.returning))
 	for _, r := range q.returning {
 		parts = append(parts, r.build(ctx))
@@ -739,6 +892,7 @@ type buildContext struct {
 	placeholderIndex int
 	subqueryAlias    int
 	subqueryAliases  map[*Query]string
+	mysqlReturning   MySQLReturningMode
 }
 
 // nextPlaceholder appends the provided argument and returns the placeholder symbol.
@@ -818,6 +972,11 @@ type TableExpression interface {
 	build(*buildContext) string
 }
 
+// WithOrdinality wraps a table or set-returning function with WITH ORDINALITY (PostgreSQL only).
+func WithOrdinality(table any, alias string, columns ...string) TableExpression {
+	return ordinalityTable{source: toTableExpression(table), alias: alias, columns: columns}
+}
+
 // TableRef references a table, optionally with alias or derived subquery.
 type TableRef struct {
 	name  string
@@ -854,6 +1013,75 @@ func (t TableRef) build(ctx *buildContext) string {
 	if alias != "" {
 		sb.WriteString(" AS ")
 		sb.WriteString(alias)
+	}
+
+	return sb.String()
+}
+
+// FuncTable renders a set-returning function to be used in FROM/JOIN.
+type functionTable struct {
+	name    string
+	args    []Expression
+	alias   string
+	columns []string
+}
+
+// FuncTable creates a set-returning function call (e.g., unnest, generate_series).
+func FuncTable(name string, args ...any) functionTable {
+	return functionTable{name: name, args: toSQLExpressions(args...)}
+}
+
+// Alias sets an alias (and optional column names) for the function table.
+func (f functionTable) Alias(alias string, columns ...string) functionTable {
+	f.alias = alias
+	f.columns = columns
+
+	return f
+}
+
+func (f functionTable) build(ctx *buildContext) string {
+	params := make([]string, 0, len(f.args))
+	for _, a := range f.args {
+		params = append(params, a.build(ctx))
+	}
+
+	base := fmt.Sprintf("%s(%s)", f.name, strings.Join(params, ", "))
+
+	if f.alias == "" {
+		return base
+	}
+
+	alias := fmt.Sprintf("%s AS %s", base, f.alias)
+
+	if len(f.columns) > 0 {
+		alias = fmt.Sprintf("%s (%s)", alias, strings.Join(f.columns, ", "))
+	}
+
+	return alias
+}
+
+type ordinalityTable struct {
+	source  TableExpression
+	alias   string
+	columns []string
+}
+
+func (o ordinalityTable) build(ctx *buildContext) string {
+	requireDialect(ctx, dialectPostgres, "WITH ORDINALITY")
+
+	sb := strings.Builder{}
+	sb.WriteString(o.source.build(ctx))
+	sb.WriteString(" WITH ORDINALITY")
+
+	if o.alias != "" {
+		sb.WriteString(" AS ")
+		sb.WriteString(o.alias)
+
+		if len(o.columns) > 0 {
+			sb.WriteString(" (")
+			sb.WriteString(strings.Join(o.columns, ", "))
+			sb.WriteString(")")
+		}
 	}
 
 	return sb.String()

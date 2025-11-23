@@ -156,12 +156,101 @@ raw := chizuql.RawQuery("SELECT now()")
 sql, args := raw.Build()
 ```
 
+### Filtros com BETWEEN/NOT BETWEEN
+```go
+q := chizuql.New().
+    Select("id", "occurred_at", "status").
+    From("events").
+    Where(
+        chizuql.Col("occurred_at").Between("2024-01-01", "2024-02-01"),
+        chizuql.Col("status").NotBetween("archived", "zzz"),
+    )
+
+sql, args := q.Build()
+```
+
+### Locks de linha com `FOR UPDATE`/`LOCK IN SHARE MODE`
+```go
+lockShared := chizuql.New().
+    Select("id", "email").
+    From("users").
+    Where(chizuql.Col("status").Eq("pending")).
+    OrderBy("id").
+    Limit(10).
+    LockInShareMode()
+
+lockUpdate := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    Select("id").
+    From("jobs").
+    Where(chizuql.Col("locked_at").IsNull()).
+    ForUpdate()
+```
+
+- `LockInShareMode` adapta a sintaxe ao dialeto: MySQL recebe `LOCK IN SHARE MODE`; PostgreSQL usa `FOR SHARE`.
+- `ForUpdate` sempre gera `FOR UPDATE`, útil para filas e workers que precisam impedir leitura concorrente enquanto processam.
+
+### Agrupamentos avançados
+```go
+q := chizuql.New().
+    Select("region", "channel", chizuql.Raw("SUM(amount) AS total")).
+    From("sales").
+    GroupBy(
+        chizuql.GroupingSets(
+            chizuql.GroupSet("region"),
+            chizuql.GroupSet("channel"),
+            chizuql.GroupSet(), // total geral
+        ),
+        chizuql.Rollup("region", "channel"),
+    ).
+    OrderBy("total DESC")
+
+sql, args := q.Build()
+```
+
+### RETURNING no MySQL com fallback configurável
+```go
+// Renderiza RETURNING (MySQL 8.0+) ou omite a cláusula para versões antigas
+update := chizuql.New().
+    WithDialect(chizuql.DialectMySQL).
+    WithMySQLReturningMode(chizuql.MySQLReturningOmit). // troque para MySQLReturningStrict em servidores 8.0+
+    Update("users").
+    Set(chizuql.Set("name", "Ana")).
+    Where(chizuql.Col("id").Eq(1)).
+    Returning("id")
+
+sql, args := update.Build()
+```
+
+### Build com `context.Context` e métricas
+```go
+ctx := context.Background()
+
+q := chizuql.New().
+    Select("id", "name").
+    From("users").
+    Where(chizuql.Col("deleted_at").IsNull())
+
+sql, args, report, err := q.BuildContext(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println("dialeto:", report.DialectKind)
+fmt.Println("args:", args)
+fmt.Println("latência de build:", report.RenderDuration)
+```
+
+- `BuildContext` aceita cancelamento por contexto (útil em builds longos) e retorna métricas de renderização.
+- O método `Build` original continua disponível para uso rápido sem contexto.
+
 ## Recursos principais
 - SELECT, INSERT, UPDATE, DELETE com cláusulas fluentes
 - JOINs, subqueries e CTEs (`WITH` e `WITH RECURSIVE`)
 - Predicados compostos (`AND`/`OR`), `IN`, `BETWEEN`, `LIKE`, `IS NULL`
 - Comparação entre colunas e uso de expressões cruas com `Raw`
 - Suporte a `RETURNING`
+- Agrupamentos avançados (`GROUPING SETS`, `ROLLUP`, `CUBE`) e window functions com frames
 - Builders de busca textual para MySQL (`MATCH ... AGAINST`) e PostgreSQL (`to_tsvector` + `websearch_to_tsquery` ou `plainto_tsquery`)
 - Extração e filtros JSON/JSONB com paths parametrizados e compatíveis com MySQL/PostgreSQL
 - Combinação de consultas com `UNION`/`UNION ALL` e ordenação/paginação finais
@@ -170,6 +259,8 @@ sql, args := raw.Build()
 
 ## Compatibilidade
 Escolha o dialeto com `WithDialect`, que alterna automaticamente os placeholders entre `?` (MySQL) e `$n` (PostgreSQL) enquanto mantém o rastreamento de argumentos.
+
+Em servidores MySQL anteriores à 8.0, utilize `WithMySQLReturningMode(MySQLReturningOmit)` para suprimir `RETURNING` em consultas DML; o modo padrão (`MySQLReturningStrict`) mantém a cláusula para ambientes que já suportam o recurso.
 
 Cláusulas de busca textual são específicas de dialeto: `MATCH ... AGAINST` só funciona com o dialeto MySQL e `TsVector`/`ts_rank` são exclusivos do dialeto PostgreSQL.
 
@@ -225,16 +316,18 @@ sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("i
 - [x] Incluir suporte a aliases automáticos para subconsultas aninhadas.
 - [x] Adicionar geração de SQL parametrizado para cláusulas `JSON`/`JSONB`.
 - [x] Suportar construção de `UNION`/`UNION ALL` com controle de ordenação.
-- [ ] Permitir `WITH ORDINALITY` em CTEs e funções set-returning no PostgreSQL.
-- [ ] Introduzir API para window functions (`OVER`, partitions, frames).
-- [ ] Oferecer builders para `GROUPING SETS`/`CUBE`/`ROLLUP`.
-- [ ] Implementar suporte a `RETURNING` no MySQL 8.0+ (quando disponível) com fallback configurável.
-- [ ] Adicionar helpers para `LOCK IN SHARE MODE`/`FOR UPDATE` conforme dialeto.
-- [ ] Criar integração com contextos para cancelar build longo e medir métricas.
+- [x] Permitir `WITH ORDINALITY` em CTEs e funções set-returning no PostgreSQL.
+- [x] Introduzir API para window functions (`OVER`, partitions, frames).
+- [x] Oferecer builders para `GROUPING SETS`/`CUBE`/`ROLLUP`.
+- [x] Implementar suporte a `RETURNING` no MySQL 8.0+ (quando disponível) com fallback configurável.
+- [x] Adicionar helpers para `LOCK IN SHARE MODE`/`FOR UPDATE` conforme dialeto.
+- [x] Criar integração com contextos para cancelar build longo e medir métricas.
 - [ ] Documentar exemplos de integração com ORMs (GORM, sqlc) e migrações.
 - [ ] Suportar optimizer hints/hints de planner específicos por dialeto.
 - [ ] Oferecer helpers para paginação por cursor (keyset pagination) na API fluente.
 - [ ] Adicionar builders para `INTERSECT`/`EXCEPT` com ordenação e paginação em nível de conjunto.
+- [ ] Expor builders para `LATERAL JOIN`/`CROSS APPLY` onde suportados.
+- [ ] Oferecer API para `MERGE`/`INSERT ... ON DUPLICATE KEY` com estratégias portáveis.
 
 ## Licença
 MIT

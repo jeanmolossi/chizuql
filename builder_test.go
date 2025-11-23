@@ -1,6 +1,7 @@
 package chizuql
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
@@ -16,6 +17,50 @@ func assertBuild(t *testing.T, q *Query, wantSQL string, wantArgs []any) {
 
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("unexpected args.\nwant: %#v\n got: %#v", wantArgs, gotArgs)
+	}
+}
+
+func TestBuildContextWithMetrics(t *testing.T) {
+	ctx := context.Background()
+
+	q := New().
+		Select("id").
+		From("users").
+		Where(Col("id").Eq(99))
+
+	gotSQL, gotArgs, report, err := q.BuildContext(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotSQL != "SELECT id FROM users WHERE (id = ?)" {
+		t.Fatalf("unexpected SQL: %s", gotSQL)
+	}
+
+	if !reflect.DeepEqual(gotArgs, []any{99}) {
+		t.Fatalf("unexpected args: %#v", gotArgs)
+	}
+
+	if report.ArgsCount != 1 {
+		t.Fatalf("expected ArgsCount=1, got %d", report.ArgsCount)
+	}
+
+	if report.DialectKind != dialectMySQL {
+		t.Fatalf("expected dialect %s, got %s", dialectMySQL, report.DialectKind)
+	}
+
+	if report.RenderDuration <= 0 {
+		t.Fatalf("expected positive render duration, got %s", report.RenderDuration)
+	}
+}
+
+func TestBuildContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, _, err := New().Select("id").From("users").BuildContext(ctx)
+	if err == nil {
+		t.Fatalf("expected cancellation error")
 	}
 }
 
@@ -52,6 +97,52 @@ func TestJoinGroupHaving(t *testing.T) {
 	)
 }
 
+func TestRowLevelLocks(t *testing.T) {
+	lockMySQL := New().
+		Select("id").
+		From("users").
+		OrderBy("id").
+		Limit(1).
+		LockInShareMode()
+
+	assertBuild(t, lockMySQL, "SELECT id FROM users ORDER BY id LIMIT 1 LOCK IN SHARE MODE", nil)
+
+	lockPg := New().
+		WithDialect(DialectPostgres).
+		Select("id").
+		From("users").
+		ForUpdate()
+
+	assertBuild(t, lockPg, "SELECT id FROM users FOR UPDATE", nil)
+}
+
+func TestRowLevelLockPanics(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic when using lock on non-select")
+		}
+	}()
+
+	New().Update("users").Set(Set("name", "x")).ForUpdate()
+}
+
+func TestBetweenPredicates(t *testing.T) {
+	q := New().
+		Select("id").
+		From("events").
+		Where(
+			Col("occurred_at").Between("2024-01-01", "2024-02-01"),
+			Col("status").NotBetween("archived", "z"),
+		)
+
+	assertBuild(t, q,
+		"SELECT id FROM events WHERE (occurred_at BETWEEN ? AND ? AND status NOT BETWEEN ? AND ?)",
+		[]any{"2024-01-01", "2024-02-01", "archived", "z"},
+	)
+}
+
 func TestInsertReturning(t *testing.T) {
 	q := New().
 		InsertInto("users", "name", "email").
@@ -62,6 +153,21 @@ func TestInsertReturning(t *testing.T) {
 	assertBuild(t, q,
 		"INSERT INTO users (name, email) VALUES (?, ?), (?, ?) RETURNING id",
 		[]any{"Jane", "jane@example.com", "John", "john@example.com"},
+	)
+}
+
+func TestMySQLReturningOmitted(t *testing.T) {
+	q := New().
+		WithDialect(DialectMySQL).
+		WithMySQLReturningMode(MySQLReturningOmit).
+		Update("users").
+		Set(Set("name", "Ana")).
+		Where(Col("id").Eq(1)).
+		Returning("id")
+
+	assertBuild(t, q,
+		"UPDATE users SET name = ? WHERE (id = ?)",
+		[]any{"Ana", 1},
 	)
 }
 
@@ -114,6 +220,37 @@ func TestMixedRecursiveCTEs(t *testing.T) {
 
 	assertBuild(t, q,
 		"WITH RECURSIVE base AS (SELECT id FROM users), tree AS (SELECT id FROM nodes) SELECT id FROM base",
+		nil,
+	)
+}
+
+func TestGroupingSetsRollupAndCube(t *testing.T) {
+	sales := New().
+		Select("region", "channel", Raw("SUM(amount) AS total")).
+		From("sales").
+		GroupBy(
+			GroupingSets(
+				GroupSet("region"),
+				GroupSet("channel"),
+				GroupSet(),
+			),
+			Rollup("region", "channel"),
+		).
+		Having(Col("total").Gt(1000)).
+		OrderBy("total DESC")
+
+	assertBuild(t, sales,
+		"SELECT region, channel, SUM(amount) AS total FROM sales GROUP BY GROUPING SETS ((region), (channel), ()), ROLLUP (region, channel) HAVING (total > ?) ORDER BY total DESC",
+		[]any{1000},
+	)
+
+	cube := New().
+		Select("category", "region", Raw("SUM(amount) AS sum_amount")).
+		From("sales").
+		GroupBy(Cube("category", "region"))
+
+	assertBuild(t, cube,
+		"SELECT category, region, SUM(amount) AS sum_amount FROM sales GROUP BY CUBE (category, region)",
 		nil,
 	)
 }
@@ -242,6 +379,42 @@ func TestPostgresPlaceholdersAndSubqueries(t *testing.T) {
 	assertBuild(t, q,
 		"SELECT id FROM users WHERE (id IN (SELECT user_id FROM likes WHERE (kind = $1)) AND status = $2)",
 		[]any{"gopher", "active"},
+	)
+}
+
+func TestWithOrdinalityOnFunctionTable(t *testing.T) {
+	q := New().
+		WithDialect(DialectPostgres).
+		Select("tags.tag_value", "tags.ord").
+		From(TableAlias("users", "u")).
+		Join(
+			WithOrdinality(FuncTable("unnest", Col("u.tags")), "tags", "tag_value", "ord"),
+			Col("tags.tag_value").Eq("go"),
+		)
+
+	assertBuild(t, q,
+		"SELECT tags.tag_value, tags.ord FROM users AS u JOIN unnest(u.tags) WITH ORDINALITY AS tags (tag_value, ord) ON (tags.tag_value = $1)",
+		[]any{"go"},
+	)
+}
+
+func TestWindowFunctions(t *testing.T) {
+	spec := Window().
+		PartitionBy(Col("department_id")).
+		OrderBy(Col("salary").Desc()).
+		RowsBetween(UnboundedPreceding(), CurrentRow())
+
+	q := New().
+		Select(
+			Func("row_number").Over(spec),
+			Func("sum", Col("salary")).Over(spec),
+			"employee_id",
+		).
+		From("employees")
+
+	assertBuild(t, q,
+		"SELECT row_number() OVER (PARTITION BY department_id ORDER BY salary DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), sum(salary) OVER (PARTITION BY department_id ORDER BY salary DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), employee_id FROM employees",
+		nil,
 	)
 }
 

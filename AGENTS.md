@@ -9,3 +9,4 @@
 - Releases devem seguir versionamento semântico. Para lançar uma versão: prepare a entrada no changelog, atualize documentação pertinente, gere a tag `vX.Y.Z` e garanta que o lint e os testes passaram.
 - Novas contribuições devem respeitar esta lista de checagens e apontar a versão/tag correspondente no changelog quando aplicável.
 - Ao concluir tarefas do roadmap, verifique quais itens foram marcados como feitos e acrescente novos próximos passos para manter o roadmap sempre com pendências atualizadas.
+- Toda nova feature deve vir acompanhada de um exemplo em `examples/` demonstrando o uso da API adicionada ou estendida.
