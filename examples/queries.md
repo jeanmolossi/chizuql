@@ -664,3 +664,37 @@ args: ["active"]
 **Comentários**
 - Hooks globais (via `RegisterBuildHooks`) e específicos por query (`WithHooks`) podem coexistir. As callbacks recebem o contexto usado na build, o SQL final, os argumentos e o `BuildReport` com métricas de duração e contagem de placeholders.
 - Erros retornados pelos hooks são ignorados para não bloquear a renderização; use-os para métricas, logs ou tracing.
+
+### 21. Hooks especializados (OpenTelemetry + slog)
+**Query**
+```go
+tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))
+mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+defer tp.Shutdown(context.Background())
+defer mp.Shutdown(context.Background())
+
+chizuql.RegisterBuildHooks(
+    hooks.TracingHook{Tracer: tp.Tracer("queries"), IncludeSQL: true},
+    &hooks.MetricsHook{Meter: mp.Meter("queries")},
+    hooks.LoggingHook{IncludeSQL: true},
+)
+
+ctx := context.WithValue(context.Background(), "traceparent", "00-abcdef0123456789abcdef0123456789-0123456789abcdef-01")
+
+sql, args, err := chizuql.New().
+    Select("id").
+    From("orders").
+    Where(chizuql.Col("status").Eq("paid")).
+    BuildContext(ctx)
+
+if err != nil {
+    panic(err)
+}
+
+fmt.Println(sql, args)
+```
+
+**Comentários**
+- `TracingHook` cria spans com `db.system`, contagem de argumentos e duração de renderização, opcionalmente incluindo o SQL em `db.statement`.
+- `MetricsHook` publica histogramas de duração (`chizuql.build.duration_ms`) e contadores de placeholders (`chizuql.build.args`) usando o `Meter` fornecido.
+- `LoggingHook` emite logs estruturados com `log/slog`, podendo anexar SQL e argumentos quando `IncludeSQL` estiver habilitado.

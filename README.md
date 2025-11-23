@@ -407,7 +407,8 @@ if _, err := db.ExecContext(ctx, sqlStr); err != nil {
 
 ## Hooks de build para métricas e logs
 
-- Use `BuildHook` para instrumentar o processo de renderização com callbacks `BeforeBuild`/`AfterBuild`. Registre hooks globais com `RegisterBuildHooks` ou restritos à query com `WithHooks`. Erros retornados pelos hooks são ignorados para que a geração de SQL não seja interrompida. O contexto recebido pelos hooks é o mesmo propagado ao `BuildContext`, permitindo extrair traceparent, request IDs ou iniciar spans.
+- Use `BuildHook` para instrumentar o processo de renderização com callbacks `BeforeBuild`/`AfterBuild`. Registre hooks globais com `RegisterBuildHooks` ou restritos à query com `WithHooks`. Erros retornados pelos hooks são ignorados para que a geração de SQL não seja interrompida. O contexto recebido pelos hooks é o mesmo propagado ao `BuildContext`, permitindo extrair traceparent, request IDs ou iniciar spans. Trate `BuildResult.Args` como somente leitura dentro dos hooks.
+- Há hooks prontos em `hooks/` para tracing e métricas no formato OpenTelemetry e para logging estruturado via `log/slog`.
 
 ```go
 var (
@@ -447,6 +448,32 @@ sql, args, err := chizuql.New().
     From("users").
     Where(chizuql.Col("status").Eq("active")).
     BuildContext(ctx)
+
+if err != nil {
+    return err
+}
+
+fmt.Println(sql, args)
+```
+
+```go
+// Exemplo com hooks especializados (OpenTelemetry + slog)
+tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))
+mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+defer tp.Shutdown(context.Background())
+defer mp.Shutdown(context.Background())
+
+tracerHook := hooks.TracingHook{Tracer: tp.Tracer("queries"), IncludeSQL: true}
+metricsHook := &hooks.MetricsHook{Meter: mp.Meter("queries")}
+loggingHook := hooks.LoggingHook{IncludeSQL: true}
+
+chizuql.RegisterBuildHooks(tracerHook, metricsHook, loggingHook)
+
+sql, args, err := chizuql.New().
+    Select("id").
+    From("users").
+    Where(chizuql.Col("status").Eq("active")).
+    BuildContext(context.Background())
 
 if err != nil {
     return err

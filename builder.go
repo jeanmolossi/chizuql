@@ -230,6 +230,8 @@ type BuildReport struct {
 }
 
 // BuildResult is passed to build hooks after SQL generation finishes.
+//
+// Hooks must treat Args as read-only to avoid mutating the rendered output.
 type BuildResult struct {
 	SQL    string
 	Args   []any
@@ -689,16 +691,13 @@ func (q *Query) buildWithContext(ctx context.Context) (BuildResult, error) {
 		report.DialectKind = inspected
 	}
 
-	hookArgs := append([]any(nil), buildCtx.args...)
-	result := BuildResult{SQL: sql, Args: hookArgs, Report: report}
+	result := BuildResult{SQL: sql, Args: buildCtx.args, Report: report}
 
 	runAfterHooks(ctx, hooks, result)
 
 	if err := ctx.Err(); err != nil {
 		return BuildResult{}, err
 	}
-
-	result.Args = buildCtx.args
 
 	return result, nil
 }

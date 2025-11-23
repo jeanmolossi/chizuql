@@ -3,6 +3,7 @@ package chizuql
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -170,6 +171,38 @@ func TestBuildContextCancelled(t *testing.T) {
 	_, _, err := New().Select("id").From("users").BuildContext(ctx)
 	if err == nil {
 		t.Fatalf("expected cancellation error")
+	}
+}
+
+func TestAfterHookReceivesOriginalArgsSlice(t *testing.T) {
+	t.Cleanup(func() { SetGlobalBuildHooks() })
+
+	var hookPtr string
+
+	RegisterBuildHooks(BuildHookFuncs{
+		After: func(_ context.Context, result BuildResult) error {
+			if len(result.Args) > 0 {
+				hookPtr = fmt.Sprintf("%p", &result.Args[0])
+			}
+
+			return nil
+		},
+	})
+
+	sql, args := New().Select("id").From("users").Where(Col("id").Eq(7)).Build()
+
+	if sql == "" {
+		t.Fatalf("expected SQL")
+	}
+
+	if len(args) == 0 {
+		t.Fatalf("expected args")
+	}
+
+	callPtr := fmt.Sprintf("%p", &args[0])
+
+	if hookPtr != callPtr {
+		t.Fatalf("hook received copied args slice: hook=%s build=%s", hookPtr, callPtr)
 	}
 }
 
