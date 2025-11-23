@@ -7,12 +7,13 @@ All notable changes to this project will be documented in this file. The format 
 ### Added
 - Configuração do Renovate em `.github/renovate.json` para automatizar atualizações de dependências (Go modules e GitHub Actions) com painel dedicado.
 - Workflows de qualidade, estabilidade e segurança (`code-quality.yml`, `stability.yml`, `security.yml`) executando lint, testes e varredura CodeQL com Go 1.25.
+- Workflow de revisão de dependências (`vulnerability-scan.yml`) para checar vulnerabilidades em PRs utilizando `actions/dependency-review-action`.
 
 ### Changed
 - Instruções do `AGENTS.md` reforçadas para evitar downgrade das versões das actions utilizadas nas pipelines de CI.
 
 ### Fixed
-- Nada até o momento.
+- Configuração do `.golangci.yml` ajustada para seguir o schema do `wsl_v5` e da seção `issues`.
 
 ## [v0.5.0] - 2025-11-23
 
