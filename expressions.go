@@ -3,7 +3,44 @@ package chizuql
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
+
+func requireDialect(ctx *buildContext, expected dialectKind, feature string) {
+	kind, ok := dialectKindOf(ctx.dialect)
+	if !ok {
+		panic(fmt.Sprintf("%s requer um dialeto reconhecido", feature))
+	}
+
+	if kind != expected {
+		panic(fmt.Sprintf("%s é suportado apenas no dialeto %s", feature, expected))
+	}
+}
+
+func escapeSingleQuotes(value string) string {
+	return strings.ReplaceAll(value, "'", "''")
+}
+
+var (
+	defaultTextSearchConfig   = "english"
+	defaultTextSearchConfigMu sync.RWMutex
+)
+
+// SetDefaultTextSearchConfig replaces the package-wide default text search configuration used by TsVector builders.
+func SetDefaultTextSearchConfig(config string) {
+	defaultTextSearchConfigMu.Lock()
+	defer defaultTextSearchConfigMu.Unlock()
+
+	defaultTextSearchConfig = config
+}
+
+// DefaultTextSearchConfig returns the package-wide default text search configuration for TsVector builders.
+func DefaultTextSearchConfig() string {
+	defaultTextSearchConfigMu.RLock()
+	defer defaultTextSearchConfigMu.RUnlock()
+
+	return defaultTextSearchConfig
+}
 
 // Expression represents any fragment that can be embedded in SQL.
 type Expression interface {
@@ -242,13 +279,29 @@ func (m MatchBuilder) Against(query string, mode ...string) Predicate {
 	return matchAgainstExpr{columns: m.columns, mode: selectedMode, query: query}
 }
 
+// Score builds a MATCH ... AGAINST expression to be used in SELECT/ORDER BY for relevance ranking.
+func (m MatchBuilder) Score(query string, mode ...string) matchScoreExpr {
+	selectedMode := ""
+	if len(mode) > 0 {
+		selectedMode = mode[0]
+	}
+
+	return matchScoreExpr{clause: matchAgainstExpr{columns: m.columns, mode: selectedMode, query: query}}
+}
+
 type matchAgainstExpr struct {
 	columns []string
 	mode    string
 	query   string
 }
 
+type matchScoreExpr struct {
+	clause matchAgainstExpr
+}
+
 func (m matchAgainstExpr) build(ctx *buildContext) string {
+	requireDialect(ctx, dialectMySQL, "MATCH ... AGAINST")
+
 	pl := ctx.nextPlaceholder(m.query)
 	part := fmt.Sprintf("MATCH(%s) AGAINST (%s)", strings.Join(m.columns, ", "), pl)
 
@@ -259,6 +312,14 @@ func (m matchAgainstExpr) build(ctx *buildContext) string {
 	return part
 }
 
+func (m matchScoreExpr) build(ctx *buildContext) string { return m.clause.build(ctx) }
+
+// Asc builds an ascending ORDER BY fragment for MATCH scores.
+func (m matchScoreExpr) Asc() Expression { return orderedExpr{expr: m, order: "ASC"} }
+
+// Desc builds a descending ORDER BY fragment for MATCH scores.
+func (m matchScoreExpr) Desc() Expression { return orderedExpr{expr: m, order: "DESC"} }
+
 // TsVectorBuilder creates PostgreSQL full-text search predicates.
 type TsVectorBuilder struct {
 	config  string
@@ -267,7 +328,7 @@ type TsVectorBuilder struct {
 
 // TsVector builds a to_tsvector expression using CONCAT_WS semantics.
 func TsVector(columns ...string) TsVectorBuilder {
-	return TsVectorBuilder{columns: columns, config: "english"}
+	return TsVectorBuilder{columns: columns, config: DefaultTextSearchConfig()}
 }
 
 // WithConfig overrides the text search configuration.
@@ -275,6 +336,11 @@ func (t TsVectorBuilder) WithConfig(config string) TsVectorBuilder {
 	t.config = config
 
 	return t
+}
+
+// WithLanguage is an alias for WithConfig to highlight language switching on PostgreSQL FTS.
+func (t TsVectorBuilder) WithLanguage(language string) TsVectorBuilder {
+	return t.WithConfig(language)
 }
 
 // WebSearch builds a websearch_to_tsquery predicate.
@@ -287,6 +353,16 @@ func (t TsVectorBuilder) PlainQuery(query string) Predicate {
 	return tsQueryPredicate{builder: t, query: query, mode: "plain"}
 }
 
+// RankWebSearch builds a ts_rank expression using websearch_to_tsquery for relevance scoring.
+func (t TsVectorBuilder) RankWebSearch(query string, normalization ...int) tsRankExpr {
+	return tsRankExpr{builder: t, query: query, mode: "web", normalization: pickNormalization(normalization)}
+}
+
+// RankPlainQuery builds a ts_rank expression using plainto_tsquery for relevance scoring.
+func (t TsVectorBuilder) RankPlainQuery(query string, normalization ...int) tsRankExpr {
+	return tsRankExpr{builder: t, query: query, mode: "plain", normalization: pickNormalization(normalization)}
+}
+
 type tsQueryPredicate struct {
 	builder TsVectorBuilder
 	query   string
@@ -294,14 +370,9 @@ type tsQueryPredicate struct {
 }
 
 func (t tsQueryPredicate) build(ctx *buildContext) string {
-	pl := ctx.nextPlaceholder(t.query)
+	vector, query := t.builder.buildTsQuery(ctx, t.query, t.mode)
 
-	switch t.mode {
-	case "web":
-		return fmt.Sprintf("to_tsvector('%s', %s) @@ websearch_to_tsquery('%s', %s)", t.builder.config, t.builder.concatColumns(), t.builder.config, pl)
-	default:
-		return fmt.Sprintf("to_tsvector('%s', %s) @@ plainto_tsquery('%s', %s)", t.builder.config, t.builder.concatColumns(), t.builder.config, pl)
-	}
+	return fmt.Sprintf("%s @@ %s", vector, query)
 }
 
 func (t TsVectorBuilder) concatColumns() string {
@@ -313,4 +384,134 @@ func (t TsVectorBuilder) concatColumns() string {
 	default:
 		return fmt.Sprintf("CONCAT_WS(' ', %s)", strings.Join(t.columns, ", "))
 	}
+}
+
+func (t TsVectorBuilder) buildTsQuery(ctx *buildContext, query string, mode string) (string, string) {
+	requireDialect(ctx, dialectPostgres, "Full Text Search (tsvector)")
+
+	placeholder := ctx.nextPlaceholder(query)
+	config := escapeSingleQuotes(t.config)
+	vector := fmt.Sprintf("to_tsvector('%s', %s)", config, t.concatColumns())
+
+	switch mode {
+	case "web":
+		return vector, fmt.Sprintf("websearch_to_tsquery('%s', %s)", config, placeholder)
+	default:
+		return vector, fmt.Sprintf("plainto_tsquery('%s', %s)", config, placeholder)
+	}
+}
+
+type tsRankExpr struct {
+	builder       TsVectorBuilder
+	query         string
+	mode          string
+	normalization *int
+}
+
+func (t tsRankExpr) build(ctx *buildContext) string {
+	vector, query := t.builder.buildTsQuery(ctx, t.query, t.mode)
+
+	if t.normalization != nil {
+		return fmt.Sprintf("ts_rank(%s, %s, %d)", vector, query, *t.normalization)
+	}
+
+	return fmt.Sprintf("ts_rank(%s, %s)", vector, query)
+}
+
+// Asc builds an ascending ORDER BY fragment for ts_rank scores.
+func (t tsRankExpr) Asc() Expression { return orderedExpr{expr: t, order: "ASC"} }
+
+// Desc builds a descending ORDER BY fragment for ts_rank scores.
+func (t tsRankExpr) Desc() Expression { return orderedExpr{expr: t, order: "DESC"} }
+
+func pickNormalization(values []int) *int {
+	if len(values) == 0 {
+		return nil
+	}
+
+	return &values[0]
+}
+
+// JSONExtract builds a dialect-aware JSON/JSONB extractor using parameterized paths.
+func JSONExtract(column string, path any) Expression {
+	return jsonExtractExpr{column: column, path: toValueExpression(path)}
+}
+
+// JSONExtractText unwraps JSON/JSONB values into text while keeping paths parameterized.
+func JSONExtractText(column string, path any) Expression {
+	return jsonExtractExpr{column: column, path: toValueExpression(path), unwrap: true}
+}
+
+type jsonExtractExpr struct {
+	column string
+	path   Expression
+	unwrap bool
+}
+
+func (j jsonExtractExpr) build(ctx *buildContext) string {
+	kind, ok := dialectKindOf(ctx.dialect)
+	if !ok {
+		panic("Extração de JSON requer um dialeto reconhecido")
+	}
+
+	path := j.path.build(ctx)
+
+	var expr string
+
+	switch kind {
+	case dialectMySQL:
+		expr = fmt.Sprintf("JSON_EXTRACT(%s, %s)", j.column, path)
+	case dialectPostgres:
+		expr = fmt.Sprintf("jsonb_path_query_first(to_jsonb(%s), (%s)::jsonpath)", j.column, path)
+	default:
+		panic("Extração de JSON não suportada para este dialeto")
+	}
+
+	if j.unwrap {
+		switch kind {
+		case dialectMySQL:
+			return fmt.Sprintf("JSON_UNQUOTE(%s)", expr)
+		case dialectPostgres:
+			return fmt.Sprintf("(%s)::text", expr)
+		}
+	}
+
+	return expr
+}
+
+// JSONContains builds a containment predicate for JSON/JSONB values.
+func JSONContains(column string, value any) Predicate {
+	return jsonContainsPredicate{column: column, value: toValueExpression(value)}
+}
+
+type jsonContainsPredicate struct {
+	column string
+	value  Expression
+}
+
+func (j jsonContainsPredicate) build(ctx *buildContext) string {
+	kind, ok := dialectKindOf(ctx.dialect)
+	if !ok {
+		panic("JSON_CONTAINS requer um dialeto reconhecido")
+	}
+
+	value := j.value.build(ctx)
+
+	switch kind {
+	case dialectMySQL:
+		return fmt.Sprintf("JSON_CONTAINS(%s, %s)", j.column, value)
+	case dialectPostgres:
+		return fmt.Sprintf("to_jsonb(%s) @> (%s)::jsonb", j.column, value)
+	default:
+		panic("JSON_CONTAINS não suportado para este dialeto")
+	}
+}
+
+type orderedExpr struct {
+	expr  Expression
+	order string
+}
+
+func (o orderedExpr) build(ctx *buildContext) string {
+	return fmt.Sprintf("%s %s", o.expr.build(ctx), o.order)
 }

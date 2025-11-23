@@ -32,6 +32,10 @@ type sqlDialect struct {
 	kind dialectKind
 }
 
+func (d sqlDialect) Kind() dialectKind {
+	return d.kind
+}
+
 func (d sqlDialect) placeholder(i int) string {
 	switch d.kind {
 	case dialectPostgres:
@@ -39,6 +43,18 @@ func (d sqlDialect) placeholder(i int) string {
 	default:
 		return "?"
 	}
+}
+
+type dialectInspector interface {
+	Kind() dialectKind
+}
+
+func dialectKindOf(d Dialect) (dialectKind, bool) {
+	if inspected, ok := d.(dialectInspector); ok {
+		return inspected.Kind(), true
+	}
+
+	return "", false
 }
 
 var (
@@ -78,18 +94,22 @@ type Query struct {
 
 	ctes []cte
 
+	unions []unionClause
+
 	selectColumns []Expression
 	distinct      bool
 
 	from  TableExpression
 	joins []joinClause
 
-	where   Predicate
-	groupBy []Expression
-	having  Predicate
-	orderBy []Expression
-	limit   *int
-	offset  *int
+	where     Predicate
+	groupBy   []Expression
+	having    Predicate
+	orderBy   []Expression
+	limit     *int
+	offset    *int
+	setLimit  *int
+	setOffset *int
 
 	insertTable         TableExpression
 	insertCols          []string
@@ -283,14 +303,22 @@ func (q *Query) OrderBy(expressions ...any) *Query {
 
 // Limit sets a LIMIT clause.
 func (q *Query) Limit(limit int) *Query {
-	q.limit = &limit
+	if len(q.unions) > 0 {
+		q.setLimit = &limit
+	} else {
+		q.limit = &limit
+	}
 
 	return q
 }
 
 // Offset sets an OFFSET clause.
 func (q *Query) Offset(offset int) *Query {
-	q.offset = &offset
+	if len(q.unions) > 0 {
+		q.setOffset = &offset
+	} else {
+		q.offset = &offset
+	}
 
 	return q
 }
@@ -324,6 +352,36 @@ func (q *Query) WithRecursive(name string, subquery *Query, columns ...string) *
 	return q
 }
 
+// Union appends UNION operations with other SELECT queries.
+func (q *Query) Union(queries ...*Query) *Query { return q.union(false, queries...) }
+
+// UnionAll appends UNION ALL operations with other SELECT queries.
+func (q *Query) UnionAll(queries ...*Query) *Query { return q.union(true, queries...) }
+
+func (q *Query) union(all bool, queries ...*Query) *Query {
+	if q.qType != queryTypeSelect {
+		if q.qType == "" {
+			panic("UNION requer uma consulta SELECT inicial")
+		}
+
+		panic("UNION pode ser usado apenas em consultas SELECT")
+	}
+
+	for _, other := range queries {
+		if other == nil {
+			panic("UNION requer queries não nulas")
+		}
+
+		if other.qType != queryTypeSelect {
+			panic("UNION aceita apenas queries SELECT como operando")
+		}
+
+		q.unions = append(q.unions, unionClause{query: other, all: all})
+	}
+
+	return q
+}
+
 // Build renders the SQL string and the ordered arguments slice.
 func (q *Query) Build() (string, []any) {
 	dialect := q.dialect
@@ -349,7 +407,11 @@ func (q *Query) render(ctx *buildContext) string {
 
 	switch q.qType {
 	case queryTypeSelect:
-		q.buildSelect(&sql, ctx)
+		if len(q.unions) > 0 {
+			q.buildSetSelect(&sql, ctx)
+		} else {
+			q.buildSelect(&sql, ctx, true)
+		}
 	case queryTypeInsert:
 		q.buildInsert(&sql, ctx)
 	case queryTypeUpdate:
@@ -393,7 +455,7 @@ func (q *Query) writeCTEs(sql *strings.Builder, ctx *buildContext) {
 	sql.WriteString(" ")
 }
 
-func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
+func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext, includeOrdering bool) {
 	sql.WriteString("SELECT ")
 
 	if q.distinct {
@@ -437,6 +499,34 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
 
 	q.buildPredicates(sql, ctx, "HAVING", q.having)
 
+	if includeOrdering {
+		q.appendOrdering(sql, ctx)
+	}
+
+	q.appendPagination(sql, q.limit, q.offset)
+}
+
+func (q *Query) buildSetSelect(sql *strings.Builder, ctx *buildContext) {
+	q.buildSelect(sql, ctx, false)
+
+	for _, u := range q.unions {
+		sql.WriteString(" ")
+
+		if u.all {
+			sql.WriteString("UNION ALL ")
+		} else {
+			sql.WriteString("UNION ")
+		}
+
+		sql.WriteString(u.query.renderSetOperand(ctx))
+	}
+
+	q.appendOrdering(sql, ctx)
+
+	q.appendPagination(sql, q.setLimit, q.setOffset)
+}
+
+func (q *Query) appendOrdering(sql *strings.Builder, ctx *buildContext) {
 	if len(q.orderBy) > 0 {
 		parts := make([]string, 0, len(q.orderBy))
 		for _, o := range q.orderBy {
@@ -446,13 +536,37 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext) {
 		sql.WriteString(" ORDER BY ")
 		sql.WriteString(strings.Join(parts, ", "))
 	}
+}
 
-	if q.limit != nil {
-		fmt.Fprintf(sql, " LIMIT %d", *q.limit)
+func (q *Query) renderSetOperand(ctx *buildContext) string {
+	if q == nil {
+		panic("UNION requer queries não nulas")
 	}
 
-	if q.offset != nil {
-		fmt.Fprintf(sql, " OFFSET %d", *q.offset)
+	if q.qType != queryTypeSelect {
+		panic("UNION aceita apenas queries SELECT como operando")
+	}
+
+	sb := strings.Builder{}
+	sb.WriteString("(")
+
+	if len(q.ctes) > 0 {
+		q.writeCTEs(&sb, ctx)
+	}
+
+	q.buildSelect(&sb, ctx, false)
+	sb.WriteString(")")
+
+	return sb.String()
+}
+
+func (q *Query) appendPagination(sql *strings.Builder, limit *int, offset *int) {
+	if limit != nil {
+		fmt.Fprintf(sql, " LIMIT %d", *limit)
+	}
+
+	if offset != nil {
+		fmt.Fprintf(sql, " OFFSET %d", *offset)
 	}
 }
 
@@ -604,6 +718,11 @@ type SetClause struct {
 	value  Expression
 }
 
+type unionClause struct {
+	query *Query
+	all   bool
+}
+
 // Set defines a column assignment for UPDATE queries.
 func Set(column string, value any) SetClause {
 	return SetClause{column: column, value: toValueExpression(value)}
@@ -618,6 +737,8 @@ type buildContext struct {
 	args             []any
 	dialect          Dialect
 	placeholderIndex int
+	subqueryAlias    int
+	subqueryAliases  map[*Query]string
 }
 
 // nextPlaceholder appends the provided argument and returns the placeholder symbol.
@@ -627,6 +748,22 @@ func (ctx *buildContext) nextPlaceholder(arg any) string {
 	ctx.args = append(ctx.args, arg)
 
 	return pl
+}
+
+func (ctx *buildContext) nextSubqueryAlias(q *Query) string {
+	if ctx.subqueryAliases == nil {
+		ctx.subqueryAliases = make(map[*Query]string)
+	}
+
+	if alias, ok := ctx.subqueryAliases[q]; ok {
+		return alias
+	}
+
+	ctx.subqueryAlias++
+	alias := fmt.Sprintf("subq_%d", ctx.subqueryAlias)
+	ctx.subqueryAliases[q] = alias
+
+	return alias
 }
 
 // cte represents a common table expression definition.
@@ -700,18 +837,23 @@ func FromSubquery(q *Query, alias string) TableRef {
 
 func (t TableRef) build(ctx *buildContext) string {
 	sb := strings.Builder{}
+	alias := t.alias
 
 	if t.sub != nil {
 		sb.WriteString("(")
 		sb.WriteString(t.sub.render(ctx))
 		sb.WriteString(")")
+
+		if alias == "" {
+			alias = ctx.nextSubqueryAlias(t.sub)
+		}
 	} else {
 		sb.WriteString(t.name)
 	}
 
-	if t.alias != "" {
+	if alias != "" {
 		sb.WriteString(" AS ")
-		sb.WriteString(t.alias)
+		sb.WriteString(alias)
 	}
 
 	return sb.String()
@@ -723,6 +865,8 @@ func toTableExpression(value any) TableExpression {
 		return v
 	case *Query:
 		return FromSubquery(v, "")
+	case Query:
+		return FromSubquery(&v, "")
 	case string:
 		return TableRef{name: v}
 	default:

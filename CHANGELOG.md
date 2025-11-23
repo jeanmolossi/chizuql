@@ -3,11 +3,27 @@
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Added
-- Nothing yet.
 
 ### Changed
-- Nothing yet.
+
+## [v0.2.0] - 2025-11-23
+### Added
+- Builders de ranking para buscas textuais: `Match.Score` no MySQL e `TsVector.RankWebSearch/RankPlainQuery` no PostgreSQL, incluindo ordenação por relevância e normalização opcional.
+- Roadmap expandido com novos próximos passos para evolução do pacote.
+- Alternância de idioma/configuração para buscas textuais PostgreSQL via `TsVector.WithLanguage` (compatível com `WithConfig`).
+- Aliases automáticos para subconsultas em `FROM`/`JOIN`, garantindo SQL válido em dialetos que exigem nomeação.
+- Helpers parametrizados para JSON/JSONB (`JSONExtract`, `JSONExtractText`, `JSONContains`) compatíveis com MySQL e PostgreSQL.
+- Configuração global do idioma padrão para buscas textuais PostgreSQL via `SetDefaultTextSearchConfig`.
+- Combinação de consultas com `UNION`/`UNION ALL` e ordenação/paginação finais.
+- Guia rápido para instalar o `golangci-lint` (>= 2.6.2) com Go 1.25+, incluindo validação de PATH e versão.
+
+### Changed
+- Cláusulas de busca textual agora validam o dialeto selecionado, impedindo `MATCH ... AGAINST` em PostgreSQL e `TsVector` em MySQL.
+- Documentação atualizada destacando compatibilidade de dialetos e os novos recursos de ranking.
+- Páginação de cada SELECT em `UNION`/`UNION ALL` preservada por operando enquanto a ordenação permanece aplicada globalmente.
+- Configuração do lint restaurada para `wsl_v5` com ajustes de conveniência e orientações reforçadas sobre versões fixas de Go e golangci-lint.
 
 ## [v0.1.0] - 2024-06-27
 ### Added

@@ -78,12 +78,12 @@ func TestUpdateWithSubquery(t *testing.T) {
 		).
 		Where(
 			Col("s.job_id").Eq(jobID),
-			Col("s.job_id").Eq(Col("r.job_id")),
+			Col("s.job_id").Eq(Col("subq_1.job_id")),
 		).
 		Returning("s.job_id")
 
 	assertBuild(t, q,
-		"UPDATE job.search AS s SET updated_at = now() FROM (SELECT r.job_id FROM job.reports AS r WHERE (r.job_id = ?)) WHERE (s.job_id = ? AND s.job_id = r.job_id) RETURNING s.job_id",
+		"UPDATE job.search AS s SET updated_at = now() FROM (SELECT r.job_id FROM job.reports AS r WHERE (r.job_id = ?)) AS subq_1 WHERE (s.job_id = ? AND s.job_id = subq_1.job_id) RETURNING s.job_id",
 		[]any{jobID, jobID},
 	)
 }
@@ -135,14 +135,98 @@ func TestFullTextSearchBuilders(t *testing.T) {
 	)
 
 	pg := New().
+		WithDialect(DialectPostgres).
 		Select("id").
 		From("posts").
 		Where(TsVector("title", "body").PlainQuery("safe go"))
 
 	assertBuild(t, pg,
-		"SELECT id FROM posts WHERE (to_tsvector('english', CONCAT_WS(' ', title, body)) @@ plainto_tsquery('english', ?))",
+		"SELECT id FROM posts WHERE (to_tsvector('english', CONCAT_WS(' ', title, body)) @@ plainto_tsquery('english', $1))",
 		[]any{"safe go"},
 	)
+}
+
+func TestFullTextRankingHelpers(t *testing.T) {
+	mysql := New().
+		Select(
+			Match("title", "body").Score("golang", "BOOLEAN MODE"),
+			"id",
+		).
+		From("posts").
+		Where(Match("title", "body").Against("golang", "BOOLEAN MODE")).
+		OrderBy(Match("title", "body").Score("golang", "BOOLEAN MODE").Desc())
+
+	assertBuild(t, mysql,
+		"SELECT MATCH(title, body) AGAINST (? IN BOOLEAN MODE), id FROM posts WHERE (MATCH(title, body) AGAINST (? IN BOOLEAN MODE)) ORDER BY MATCH(title, body) AGAINST (? IN BOOLEAN MODE) DESC",
+		[]any{"golang", "golang", "golang"},
+	)
+
+	pg := New().
+		WithDialect(DialectPostgres).
+		Select(
+			TsVector("title", "body").RankWebSearch("safe go"),
+			"id",
+		).
+		From("posts").
+		Where(TsVector("title", "body").WebSearch("safe go")).
+		OrderBy(TsVector("title", "body").RankWebSearch("safe go", 16).Desc())
+
+	assertBuild(t, pg,
+		"SELECT ts_rank(to_tsvector('english', CONCAT_WS(' ', title, body)), websearch_to_tsquery('english', $1)), id FROM posts WHERE (to_tsvector('english', CONCAT_WS(' ', title, body)) @@ websearch_to_tsquery('english', $2)) ORDER BY ts_rank(to_tsvector('english', CONCAT_WS(' ', title, body)), websearch_to_tsquery('english', $3), 16) DESC",
+		[]any{"safe go", "safe go", "safe go"},
+	)
+}
+
+func TestPostgresFullTextLanguage(t *testing.T) {
+	pg := New().
+		WithDialect(DialectPostgres).
+		Select("id").
+		From("posts").
+		Where(TsVector("title").WithLanguage("portuguese").WebSearch("busca segura"))
+
+	assertBuild(t, pg,
+		"SELECT id FROM posts WHERE (to_tsvector('portuguese', title) @@ websearch_to_tsquery('portuguese', $1))",
+		[]any{"busca segura"},
+	)
+
+	escaped := New().
+		WithDialect(DialectPostgres).
+		Select("id").
+		From("posts").
+		Where(TsVector("title").WithLanguage("portuguese'safe").PlainQuery("segura"))
+
+	assertBuild(t, escaped,
+		"SELECT id FROM posts WHERE (to_tsvector('portuguese''safe', title) @@ plainto_tsquery('portuguese''safe', $1))",
+		[]any{"segura"},
+	)
+}
+
+func TestDefaultTextSearchConfig(t *testing.T) {
+	previous := DefaultTextSearchConfig()
+
+	SetDefaultTextSearchConfig("simple")
+	t.Cleanup(func() { SetDefaultTextSearchConfig(previous) })
+
+	pg := New().
+		WithDialect(DialectPostgres).
+		Select("id").
+		From("posts").
+		Where(TsVector("title", "body").PlainQuery("seguro"))
+
+	assertBuild(t, pg,
+		"SELECT id FROM posts WHERE (to_tsvector('simple', CONCAT_WS(' ', title, body)) @@ plainto_tsquery('simple', $1))",
+		[]any{"seguro"},
+	)
+}
+
+func TestDialectSpecificFullTextSearchPanics(t *testing.T) {
+	assertPanicsWith(t, func() {
+		New().Select(TsVector("title").PlainQuery("oops")).From("posts").Build()
+	}, "Full Text Search (tsvector) é suportado apenas no dialeto postgres")
+
+	assertPanicsWith(t, func() {
+		New().WithDialect(DialectPostgres).Select(Match("title").Against("oops")).From("posts").Build()
+	}, "MATCH ... AGAINST é suportado apenas no dialeto mysql")
 }
 
 func TestPostgresPlaceholdersAndSubqueries(t *testing.T) {
@@ -158,6 +242,70 @@ func TestPostgresPlaceholdersAndSubqueries(t *testing.T) {
 	assertBuild(t, q,
 		"SELECT id FROM users WHERE (id IN (SELECT user_id FROM likes WHERE (kind = $1)) AND status = $2)",
 		[]any{"gopher", "active"},
+	)
+}
+
+func TestAutomaticSubqueryAliases(t *testing.T) {
+	q := New().
+		Select("subq_1.user_id").
+		From(New().Select("user_id").From("votes")).
+		Where(Col("subq_1.user_id").Gt(10))
+
+	assertBuild(t, q,
+		"SELECT subq_1.user_id FROM (SELECT user_id FROM votes) AS subq_1 WHERE (subq_1.user_id > ?)",
+		[]any{10},
+	)
+
+	joined := New().
+		Select("subq_1.id", "subq_2.total").
+		From(New().Select("id").From("posts")).
+		Join(
+			New().
+				Select("post_id", Raw("COUNT(*) AS total")).
+				From("comments").
+				GroupBy("post_id"),
+			Col("subq_1.id").Eq(Col("subq_2.post_id")),
+		)
+
+	assertBuild(t, joined,
+		"SELECT subq_1.id, subq_2.total FROM (SELECT id FROM posts) AS subq_1 JOIN (SELECT post_id, COUNT(*) AS total FROM comments GROUP BY post_id) AS subq_2 ON (subq_1.id = subq_2.post_id)",
+		nil,
+	)
+}
+
+func TestUnionAllWithOrdering(t *testing.T) {
+	base := New().
+		Select("id", "title").
+		From("posts")
+
+	archived := New().
+		Select("id", "title").
+		From("archived_posts")
+
+	union := base.UnionAll(archived).OrderBy("id DESC").Limit(5)
+
+	assertBuild(t, union,
+		"SELECT id, title FROM posts UNION ALL (SELECT id, title FROM archived_posts) ORDER BY id DESC LIMIT 5",
+		nil,
+	)
+}
+
+func TestUnionAllKeepsPaginationPerOperand(t *testing.T) {
+	recent := New().
+		Select("id", "title").
+		From("posts").
+		Limit(5)
+
+	archived := New().
+		Select("id", "title").
+		From("archived_posts").
+		Limit(5)
+
+	union := recent.UnionAll(archived).OrderBy("id DESC")
+
+	assertBuild(t, union,
+		"SELECT id, title FROM posts LIMIT 5 UNION ALL (SELECT id, title FROM archived_posts LIMIT 5) ORDER BY id DESC",
+		nil,
 	)
 }
 
@@ -197,6 +345,35 @@ func TestOnConflictDoNothingPostgres(t *testing.T) {
 	assertBuild(t, q,
 		"INSERT INTO events (id, payload) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
 		[]any{1, "data"},
+	)
+}
+
+func TestJSONHelpers(t *testing.T) {
+	mysql := New().
+		Select(
+			JSONExtract("metadata", "$.title"),
+			JSONExtractText("metadata", "$.author"),
+		).
+		From("articles").
+		Where(JSONContains("metadata", `{"published":true}`))
+
+	assertBuild(t, mysql,
+		"SELECT JSON_EXTRACT(metadata, ?), JSON_UNQUOTE(JSON_EXTRACT(metadata, ?)) FROM articles WHERE (JSON_CONTAINS(metadata, ?))",
+		[]any{"$.title", "$.author", "{\"published\":true}"},
+	)
+
+	pg := New().
+		WithDialect(DialectPostgres).
+		Select(
+			JSONExtract("metadata", "$.title"),
+			JSONExtractText("metadata", "$.author"),
+		).
+		From("articles").
+		Where(JSONContains("metadata", `{"published":true}`))
+
+	assertBuild(t, pg,
+		"SELECT jsonb_path_query_first(to_jsonb(metadata), ($1)::jsonpath), (jsonb_path_query_first(to_jsonb(metadata), ($2)::jsonpath))::text FROM articles WHERE (to_jsonb(metadata) @> ($3)::jsonb)",
+		[]any{"$.title", "$.author", "{\"published\":true}"},
 	)
 }
 
