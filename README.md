@@ -206,13 +206,17 @@ sqlMySQL, argsMySQL := chizuql.New().WithDialect(chizuql.DialectMySQL).Select("i
 - Desenvolvido e testado em Go 1.25.
 
 ## Contribuindo e releases
-- Execute sempre `go test ./...` e `golangci-lint run --fix ./...` (versão 2.6.2 ou superior) antes de abrir um PR ou publicar
-  uma release.
-- Para instalar o lint em outros ambientes ou CI, utilize o script oficial: `curl -sSfL https://raw.githubusercontent.com/golang
-ci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.6.2` (mais opções em https://golangci-lint.run/docs/welcome
-/install/#other-ci).
+- Verifique o ambiente antes de qualquer alteração: `go version` deve reportar Go 1.25.x e `golangci-lint --version` deve apontar para a versão 2.6.2 ou superior no PATH em uso.
+- Utilize Go 1.25 e não altere a toolchain ou versões de linting salvo solicitação explícita.
+- Execute sempre `go test ./...` e, quando houver alterações em arquivos `*.go`, rode `golangci-lint run --fix ./...` (versão 2.6.2 ou superior) antes de abrir um PR ou publicar uma release.
 - Atualize o `CHANGELOG.md` seguindo o modelo do Keep a Changelog: registre alterações em "Unreleased" e mova-as para uma nova seção versionada (`vX.Y.Z`) quando criar uma tag.
 - Adotamos versionamento semântico. Para novas releases, garanta que testes e lint passaram, que a documentação foi atualizada e que a tag `vX.Y.Z` foi criada.
+
+### Instalação rápida do golangci-lint (>= 2.6.2) com Go 1.25+
+1. Confirme o Go ativo com `go version` (saída deve ser 1.25.x).
+2. Instale/atualize o lint com o script oficial: `curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.6.2`.
+3. Garanta que o binário correto está no PATH (`which golangci-lint`) e valide a versão com `/usr/local/bin/golangci-lint --version`.
+4. Em CI, reutilize o binário já baixado ou armazene-o em cache para acelerar execuções subsequentes.
 
 ## Roadmap
 - [x] Converter placeholders para os formatos específicos de drivers (ex.: `$1` em PostgreSQL) automaticamente.
