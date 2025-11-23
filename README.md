@@ -405,6 +405,44 @@ if _, err := db.ExecContext(ctx, sqlStr); err != nil {
 ```
 - Para migrações declarativas que exigem SQL estático, `RawQuery` ajuda a compartilhar snippets consistentes (inclusive para rollback) mantendo a mesma estratégia de placeholders.
 
+## Hooks de build para métricas e logs
+
+- Use `BuildHook` para instrumentar o processo de renderização com callbacks `BeforeBuild`/`AfterBuild`. Registre hooks globais com `RegisterBuildHooks` ou restritos à query com `WithHooks`. Erros retornados pelos hooks são ignorados para que a geração de SQL não seja interrompida.
+
+```go
+var builds []time.Duration
+
+// Hook global com funções inline; também é possível implementar a interface BuildHook.
+chizuql.RegisterBuildHooks(chizuql.BuildHookFuncs{
+    After: func(ctx context.Context, result chizuql.BuildResult) error {
+        builds = append(builds, result.Report.RenderDuration)
+
+        log.Printf("sql=%s args=%v duration=%s placeholders=%d", result.SQL, result.Args, result.Report.RenderDuration, result.Report.ArgsCount)
+
+        return nil
+    },
+})
+
+sql, args, report, err := chizuql.New().
+    WithHooks(chizuql.BuildHookFuncs{ // hook específico desta query
+        After: func(ctx context.Context, result chizuql.BuildResult) error {
+            fmt.Printf("captured %d placeholders in %s\n", result.Report.ArgsCount, result.Report.RenderDuration)
+
+            return nil
+        },
+    }).
+    Select("id", "email").
+    From("users").
+    Where(chizuql.Col("status").Eq("active")).
+    BuildContext(context.Background())
+
+if err != nil {
+    return err
+}
+
+fmt.Println(sql, args, report.RenderDuration)
+```
+
 - Desenvolvido e testado em Go 1.25.
 
 ## Contribuindo e releases

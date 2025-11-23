@@ -627,3 +627,45 @@ _, err := db.ExecContext(ctx, sqlMig, argsMig...)
 **Comentários**
 - A saída do builder (`sql` + `args`) pode ser repassada diretamente a `db.Raw` do GORM ou aos métodos `QueryContext`/`ExecContext` usados pelo sqlc.
 - Para migrações estáticas, `RawQuery` permite compartilhar comandos validados (inclusive para rollback) com a mesma convenção de placeholders do projeto.
+
+### 20. Hooks de build para métricas e logs
+**Query**
+```go
+var lastDuration time.Duration
+
+chizuql.RegisterBuildHooks(chizuql.BuildHookFuncs{
+    After: func(ctx context.Context, result chizuql.BuildResult) error {
+        lastDuration = result.Report.RenderDuration
+
+        fmt.Printf("[hook] sql=%s | args=%v | placeholders=%d | duration=%s\n", result.SQL, result.Args, result.Report.ArgsCount, result.Report.RenderDuration)
+
+        return nil
+    },
+})
+
+q := chizuql.New().
+    WithHooks(chizuql.BuildHookFuncs{
+        Before: func(ctx context.Context, _ *chizuql.Query) error {
+            fmt.Println("montando consulta de usuários ativos")
+
+            return nil
+        },
+    }).
+    Select("id", "email").
+    From("users").
+    Where(chizuql.Col("status").Eq("active"))
+
+sql, args := q.Build()
+```
+
+**Saída gerada**
+```
+montando consulta de usuários ativos
+[hook] sql=SELECT id, email FROM users WHERE (status = ?) | args=["active"] | placeholders=1 | duration=173.191µs
+SELECT id, email FROM users WHERE (status = ?)
+args: ["active"]
+```
+
+**Comentários**
+- Hooks globais (via `RegisterBuildHooks`) e específicos por query (`WithHooks`) podem coexistir. As callbacks recebem o contexto usado na build, o SQL final, os argumentos e o `BuildReport` com métricas de duração e contagem de placeholders.
+- Erros retornados pelos hooks são ignorados para não bloquear a renderização; use-os para métricas, logs ou tracing.

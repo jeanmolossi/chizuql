@@ -2,6 +2,7 @@ package chizuql
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -17,6 +18,84 @@ func assertBuild(t *testing.T, q *Query, wantSQL string, wantArgs []any) {
 
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("unexpected args.\nwant: %#v\n got: %#v", wantArgs, gotArgs)
+	}
+}
+
+func TestBuildHooks(t *testing.T) {
+	t.Cleanup(func() { SetGlobalBuildHooks() })
+
+	beforeCalls := 0
+	afterCalls := 0
+
+	var (
+		recordedSQL    string
+		recordedArgs   []any
+		recordedReport BuildReport
+	)
+
+	recordingHook := BuildHookFuncs{
+		Before: func(ctx context.Context, q *Query) error {
+			beforeCalls++
+
+			return nil
+		},
+		After: func(ctx context.Context, result BuildResult) error {
+			afterCalls++
+			recordedSQL = result.SQL
+			recordedArgs = result.Args
+			recordedReport = result.Report
+
+			return nil
+		},
+	}
+
+	RegisterBuildHooks(BuildHookFuncs{
+		Before: func(context.Context, *Query) error { return errors.New("before fail") },
+		After:  func(context.Context, BuildResult) error { return errors.New("after fail") },
+	})
+
+	q := New().
+		Select("id").
+		From("users").
+		Where(Col("id").Eq(42)).
+		WithHooks(recordingHook)
+
+	gotSQL, gotArgs := q.Build()
+
+	if gotSQL != "SELECT id FROM users WHERE (id = ?)" {
+		t.Fatalf("unexpected SQL: %s", gotSQL)
+	}
+
+	if !reflect.DeepEqual(gotArgs, []any{42}) {
+		t.Fatalf("unexpected args: %#v", gotArgs)
+	}
+
+	if beforeCalls != 1 {
+		t.Fatalf("expected before hook once, got %d", beforeCalls)
+	}
+
+	if afterCalls != 1 {
+		t.Fatalf("expected after hook once, got %d", afterCalls)
+	}
+
+	if recordedSQL != gotSQL {
+		t.Fatalf("after hook SQL mismatch: %s", recordedSQL)
+	}
+
+	if !reflect.DeepEqual(recordedArgs, gotArgs) {
+		t.Fatalf("after hook args mismatch: %#v", recordedArgs)
+	}
+
+	if recordedReport.ArgsCount != len(gotArgs) {
+		t.Fatalf("expected ArgsCount=%d, got %d", len(gotArgs), recordedReport.ArgsCount)
+	}
+
+	if recordedReport.DialectKind != dialectMySQL {
+		t.Fatalf("expected dialect %s, got %s", dialectMySQL, recordedReport.DialectKind)
+	}
+
+	if recordedReport.RenderDuration <= 0 {
+		t.Fatalf("expected positive render duration, got %s", recordedReport.RenderDuration)
 	}
 }
 

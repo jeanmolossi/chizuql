@@ -215,6 +215,8 @@ type Query struct {
 	lock lockClause
 
 	optimizerHints []PlannerHint
+
+	hooks []BuildHook
 }
 
 // BuildReport captures metrics from query rendering.
@@ -225,6 +227,77 @@ type BuildReport struct {
 	ArgsCount int
 	// DialectKind is the dialect that was used for rendering.
 	DialectKind dialectKind
+}
+
+// BuildResult is passed to build hooks after SQL generation finishes.
+type BuildResult struct {
+	SQL    string
+	Args   []any
+	Report BuildReport
+}
+
+// BuildHook allows instrumentation before and after SQL rendering.
+type BuildHook interface {
+	BeforeBuild(context.Context, *Query) error
+	AfterBuild(context.Context, BuildResult) error
+}
+
+// BuildHookFuncs provides optional callbacks to satisfy BuildHook.
+type BuildHookFuncs struct {
+	Before func(context.Context, *Query) error
+	After  func(context.Context, BuildResult) error
+}
+
+// BeforeBuild runs the configured Before callback when present.
+func (h BuildHookFuncs) BeforeBuild(ctx context.Context, q *Query) error {
+	if h.Before == nil {
+		return nil
+	}
+
+	return h.Before(ctx, q)
+}
+
+// AfterBuild runs the configured After callback when present.
+func (h BuildHookFuncs) AfterBuild(ctx context.Context, result BuildResult) error {
+	if h.After == nil {
+		return nil
+	}
+
+	return h.After(ctx, result)
+}
+
+var (
+	buildHooksMu     sync.RWMutex
+	globalBuildHooks []BuildHook
+)
+
+// RegisterBuildHooks appends hooks to the global registry used by all queries.
+func RegisterBuildHooks(hooks ...BuildHook) {
+	buildHooksMu.Lock()
+	defer buildHooksMu.Unlock()
+
+	for _, hook := range hooks {
+		if hook == nil {
+			continue
+		}
+
+		globalBuildHooks = append(globalBuildHooks, hook)
+	}
+}
+
+// SetGlobalBuildHooks replaces the global hooks registry atomically.
+func SetGlobalBuildHooks(hooks ...BuildHook) {
+	buildHooksMu.Lock()
+	defer buildHooksMu.Unlock()
+
+	filtered := make([]BuildHook, 0, len(hooks))
+	for _, hook := range hooks {
+		if hook != nil {
+			filtered = append(filtered, hook)
+		}
+	}
+
+	globalBuildHooks = filtered
 }
 
 // New returns a fresh Query instance ready to be composed.
@@ -247,6 +320,13 @@ func (q *Query) WithDialect(d Dialect) *Query {
 // WithMySQLReturningMode configures how RETURNING is rendered when using the MySQL dialect.
 func (q *Query) WithMySQLReturningMode(mode MySQLReturningMode) *Query {
 	q.mysqlReturningMode = mode
+
+	return q
+}
+
+// WithHooks attaches build hooks that will run alongside any global hooks.
+func (q *Query) WithHooks(hooks ...BuildHook) *Query {
+	q.hooks = append(q.hooks, hooks...)
 
 	return q
 }
@@ -546,28 +626,51 @@ func (q *Query) union(all bool, queries ...*Query) *Query {
 	return q
 }
 
-// Build renders the SQL string and the ordered arguments slice.
-func (q *Query) Build() (string, []any) {
-	dialect := q.dialect
-	if dialect == nil {
-		dialect = DefaultDialect()
-	}
+func (q *Query) collectHooks() []BuildHook {
+	buildHooksMu.RLock()
 
-	ctx := &buildContext{dialect: dialect, mysqlReturning: q.mysqlReturningMode}
-	sql := strings.TrimSpace(q.render(ctx))
+	hooks := append([]BuildHook(nil), globalBuildHooks...)
 
-	return sql, ctx.args
+	buildHooksMu.RUnlock()
+
+	return append(hooks, q.hooks...)
 }
 
-// BuildContext renders SQL and arguments honoring cancellation and returning basic metrics.
-func (q *Query) BuildContext(ctx context.Context) (string, []any, BuildReport, error) {
+func runBeforeHooks(ctx context.Context, hooks []BuildHook, q *Query) {
+	for _, hook := range hooks {
+		if hook == nil {
+			continue
+		}
+
+		if err := hook.BeforeBuild(ctx, q); err != nil {
+			continue
+		}
+	}
+}
+
+func runAfterHooks(ctx context.Context, hooks []BuildHook, result BuildResult) {
+	for _, hook := range hooks {
+		if hook == nil {
+			continue
+		}
+
+		if err := hook.AfterBuild(ctx, result); err != nil {
+			continue
+		}
+	}
+}
+
+func (q *Query) buildWithContext(ctx context.Context) (BuildResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	if err := ctx.Err(); err != nil {
-		return "", nil, BuildReport{}, err
+		return BuildResult{}, err
 	}
+
+	hooks := q.collectHooks()
+	runBeforeHooks(ctx, hooks, q)
 
 	dialect := q.dialect
 	if dialect == nil {
@@ -586,11 +689,38 @@ func (q *Query) BuildContext(ctx context.Context) (string, []any, BuildReport, e
 		report.DialectKind = inspected
 	}
 
+	hookArgs := append([]any(nil), buildCtx.args...)
+	result := BuildResult{SQL: sql, Args: hookArgs, Report: report}
+
+	runAfterHooks(ctx, hooks, result)
+
 	if err := ctx.Err(); err != nil {
+		return BuildResult{}, err
+	}
+
+	result.Args = buildCtx.args
+
+	return result, nil
+}
+
+// Build renders the SQL string and the ordered arguments slice.
+func (q *Query) Build() (string, []any) {
+	result, err := q.buildWithContext(context.Background())
+	if err != nil {
+		return "", nil
+	}
+
+	return result.SQL, result.Args
+}
+
+// BuildContext renders SQL and arguments honoring cancellation and returning basic metrics.
+func (q *Query) BuildContext(ctx context.Context) (string, []any, BuildReport, error) {
+	result, err := q.buildWithContext(ctx)
+	if err != nil {
 		return "", nil, BuildReport{}, err
 	}
 
-	return sql, buildCtx.args, report, nil
+	return result.SQL, result.Args, result.Report, nil
 }
 
 func (q *Query) render(ctx *buildContext) string {
