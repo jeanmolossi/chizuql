@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file. The format 
 ### Changed
 - Cláusulas de busca textual agora validam o dialeto selecionado, impedindo `MATCH ... AGAINST` em PostgreSQL e `TsVector` em MySQL.
 - Documentação atualizada destacando compatibilidade de dialetos e os novos recursos de ranking.
+- Páginação de cada SELECT em `UNION`/`UNION ALL` preservada por operando enquanto a ordenação permanece aplicada globalmente.
 
 ## [v0.1.0] - 2024-06-27
 ### Added

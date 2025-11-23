@@ -6,7 +6,7 @@ linters:
   enable:
     - gosec
     - staticcheck
-    - wsl_v5
+    - wsl
     - nlreturn
     - errcheck
     - dupl
@@ -18,11 +18,6 @@ linters:
       min-complexity: 20
     dupl:
       threshold: 200
-    wsl_v5:
-      allow-cuddle-declarations: true
-      allow-assign-and-call: true
-      allow-multiline-assign: true
-      allow-separated-leading-comment: true
     gosec:
       excludes:
         - G115

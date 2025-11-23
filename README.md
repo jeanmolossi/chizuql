@@ -94,6 +94,7 @@ sql, args := union.Build()
 ```
 
 ### Buscas textuais
+> Observação: os exemplos de PostgreSQL abaixo assumem que `chizuql.SetDefaultDialect(chizuql.DialectPostgres)` foi chamado previamente, pois o dialeto PostgreSQL é necessário.
 ```go
 // MySQL
 match := chizuql.Match("title", "body").Against("golang", "BOOLEAN MODE")

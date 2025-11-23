@@ -102,12 +102,14 @@ type Query struct {
 	from  TableExpression
 	joins []joinClause
 
-	where   Predicate
-	groupBy []Expression
-	having  Predicate
-	orderBy []Expression
-	limit   *int
-	offset  *int
+	where     Predicate
+	groupBy   []Expression
+	having    Predicate
+	orderBy   []Expression
+	limit     *int
+	offset    *int
+	setLimit  *int
+	setOffset *int
 
 	insertTable         TableExpression
 	insertCols          []string
@@ -301,14 +303,22 @@ func (q *Query) OrderBy(expressions ...any) *Query {
 
 // Limit sets a LIMIT clause.
 func (q *Query) Limit(limit int) *Query {
-	q.limit = &limit
+	if len(q.unions) > 0 {
+		q.setLimit = &limit
+	} else {
+		q.limit = &limit
+	}
 
 	return q
 }
 
 // Offset sets an OFFSET clause.
 func (q *Query) Offset(offset int) *Query {
-	q.offset = &offset
+	if len(q.unions) > 0 {
+		q.setOffset = &offset
+	} else {
+		q.offset = &offset
+	}
 
 	return q
 }
@@ -492,6 +502,8 @@ func (q *Query) buildSelect(sql *strings.Builder, ctx *buildContext, includeOrde
 	if includeOrdering {
 		q.appendOrdering(sql, ctx)
 	}
+
+	q.appendPagination(sql, q.limit, q.offset)
 }
 
 func (q *Query) buildSetSelect(sql *strings.Builder, ctx *buildContext) {
@@ -510,6 +522,8 @@ func (q *Query) buildSetSelect(sql *strings.Builder, ctx *buildContext) {
 	}
 
 	q.appendOrdering(sql, ctx)
+
+	q.appendPagination(sql, q.setLimit, q.setOffset)
 }
 
 func (q *Query) appendOrdering(sql *strings.Builder, ctx *buildContext) {
@@ -521,14 +535,6 @@ func (q *Query) appendOrdering(sql *strings.Builder, ctx *buildContext) {
 
 		sql.WriteString(" ORDER BY ")
 		sql.WriteString(strings.Join(parts, ", "))
-	}
-
-	if q.limit != nil {
-		fmt.Fprintf(sql, " LIMIT %d", *q.limit)
-	}
-
-	if q.offset != nil {
-		fmt.Fprintf(sql, " OFFSET %d", *q.offset)
 	}
 }
 
@@ -552,6 +558,16 @@ func (q *Query) renderSetOperand(ctx *buildContext) string {
 	sb.WriteString(")")
 
 	return sb.String()
+}
+
+func (q *Query) appendPagination(sql *strings.Builder, limit *int, offset *int) {
+	if limit != nil {
+		fmt.Fprintf(sql, " LIMIT %d", *limit)
+	}
+
+	if offset != nil {
+		fmt.Fprintf(sql, " OFFSET %d", *offset)
+	}
 }
 
 func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {

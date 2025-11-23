@@ -290,6 +290,25 @@ func TestUnionAllWithOrdering(t *testing.T) {
 	)
 }
 
+func TestUnionAllKeepsPaginationPerOperand(t *testing.T) {
+	recent := New().
+		Select("id", "title").
+		From("posts").
+		Limit(5)
+
+	archived := New().
+		Select("id", "title").
+		From("archived_posts").
+		Limit(5)
+
+	union := recent.UnionAll(archived).OrderBy("id DESC")
+
+	assertBuild(t, union,
+		"SELECT id, title FROM posts LIMIT 5 UNION ALL (SELECT id, title FROM archived_posts LIMIT 5) ORDER BY id DESC",
+		nil,
+	)
+}
+
 func TestOnConflictMySQL(t *testing.T) {
 	q := New().
 		InsertInto("users", "email", "name").
