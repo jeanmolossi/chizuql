@@ -513,6 +513,41 @@ func TestUnionAllKeepsPaginationPerOperand(t *testing.T) {
 	)
 }
 
+func TestKeysetPaginationHelpers(t *testing.T) {
+	q := New().
+		Select("id", "created_at").
+		From("posts").
+		OrderBy(Col("id").Asc(), Col("created_at").Desc()).
+		KeysetAfter(10, "2024-01-01 00:00:00").
+		Limit(20)
+
+	assertBuild(t, q,
+		"SELECT id, created_at FROM posts WHERE (((id > ?) OR (id = ? AND created_at < ?))) ORDER BY id ASC, created_at DESC LIMIT 20",
+		[]any{10, 10, "2024-01-01 00:00:00"},
+	)
+
+	prev := New().
+		Select("score", "id").
+		From("rankings").
+		OrderBy(Col("score").Desc(), Col("id").Asc()).
+		KeysetBefore(95.5, 50)
+
+	assertBuild(t, prev,
+		"SELECT score, id FROM rankings WHERE (((score > ?) OR (score = ? AND id < ?))) ORDER BY score DESC, id ASC",
+		[]any{95.5, 95.5, 50},
+	)
+}
+
+func TestKeysetPaginationPanics(t *testing.T) {
+	assertPanicsWith(t, func() {
+		New().Select("id").From("items").KeysetAfter(1)
+	}, "KeysetAfter requer ORDER BY configurado")
+
+	assertPanicsWith(t, func() {
+		KeysetAfter([]Expression{Col("id").Asc()}, 1, 2)
+	}, "a quantidade de valores de cursor deve corresponder ao ORDER BY configurado")
+}
+
 func TestOnConflictMySQL(t *testing.T) {
 	q := New().
 		InsertInto("users", "email", "name").

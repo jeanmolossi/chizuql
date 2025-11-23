@@ -750,3 +750,69 @@ type orderedExpr struct {
 func (o orderedExpr) build(ctx *buildContext) string {
 	return fmt.Sprintf("%s %s", o.expr.build(ctx), o.order)
 }
+
+func extractOrdering(expr Expression) (Expression, string) {
+	switch v := expr.(type) {
+	case orderedExpr:
+		return v.expr, strings.ToUpper(v.order)
+	default:
+		return expr, "ASC"
+	}
+}
+
+// KeysetAfter builds a keyset pagination predicate for moving forward (next page) using the provided ORDER BY expressions.
+//
+// The number of cursor values must match the number of ordering expressions. OrderBy expressions using Desc() automatically
+// flip the comparator to keep consistency with the configured direction.
+func KeysetAfter(ordering []Expression, cursorValues ...any) Predicate {
+	return buildKeysetPredicate(ordering, cursorValues, true)
+}
+
+// KeysetBefore builds a keyset pagination predicate for moving backward (previous page) using the provided ORDER BY expressions.
+//
+// The number of cursor values must match the number of ordering expressions. OrderBy expressions using Desc() automatically
+// flip the comparator to keep consistency with the configured direction.
+func KeysetBefore(ordering []Expression, cursorValues ...any) Predicate {
+	return buildKeysetPredicate(ordering, cursorValues, false)
+}
+
+func buildKeysetPredicate(ordering []Expression, cursorValues []any, forward bool) Predicate {
+	if len(ordering) == 0 {
+		panic("keyset pagination requer ao menos uma expressão de ordenação")
+	}
+
+	if len(ordering) != len(cursorValues) {
+		panic("a quantidade de valores de cursor deve corresponder ao ORDER BY configurado")
+	}
+
+	values := toValueExpressions(cursorValues...)
+	parts := make([]Predicate, 0, len(ordering))
+
+	for idx, orderExpr := range ordering {
+		baseExpr, direction := extractOrdering(orderExpr)
+
+		cmp := ">"
+		if !forward {
+			cmp = "<"
+		}
+
+		if direction == "DESC" {
+			if cmp == ">" {
+				cmp = "<"
+			} else {
+				cmp = ">"
+			}
+		}
+
+		comparisons := make([]Predicate, 0, idx+1)
+		for i := 0; i < idx; i++ {
+			left, _ := extractOrdering(ordering[i])
+			comparisons = append(comparisons, comparison{left: left, op: "=", right: values[i]})
+		}
+
+		comparisons = append(comparisons, comparison{left: baseExpr, op: cmp, right: values[idx]})
+		parts = append(parts, And(comparisons...))
+	}
+
+	return Or(parts...)
+}

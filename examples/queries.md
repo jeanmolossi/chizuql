@@ -108,6 +108,32 @@ args: []
 - Cada operando mantém sua própria paginação; `Limit(5)` após `UnionAll` afeta o resultado consolidado.
 - Os parênteses são adicionados automaticamente em cada SELECT combinado.
 
+### 4.1 Paginação por cursor (keyset) para página seguinte
+**Query**
+```go
+page := chizuql.New().
+    Select("id", "created_at").
+    From("posts").
+    OrderBy(
+        chizuql.Col("id").Asc(),
+        chizuql.Col("created_at").Desc(),
+    ).
+    KeysetAfter(120, "2025-01-01 00:00:00").
+    Limit(20)
+
+sql, args := page.Build()
+```
+
+**Saída gerada**
+```
+SELECT id, created_at FROM posts WHERE ((id > ? OR (id = ? AND created_at < ?))) ORDER BY id ASC, created_at DESC LIMIT 20
+args: [120 120 "2025-01-01 00:00:00"]
+```
+
+**Comentários**
+- `KeysetAfter` constrói o predicado de cursor combinando os mesmos campos do `ORDER BY` e respeita direções `DESC`.
+- Para navegar para a página anterior basta usar `KeysetBefore` com o mesmo cursor; os comparadores são invertidos automaticamente.
+
 ### 5. INSERT multi-linha com RETURNING
 **Query**
 ```go
