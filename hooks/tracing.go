@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"time"
 
 	"github.com/jeanmolossi/chizuql"
 	"go.opentelemetry.io/otel"
@@ -45,7 +46,13 @@ func (h TracingHook) BeforeBuild(context.Context, *chizuql.Query) error { return
 // AfterBuild creates a span annotating the build metrics and, optionally, the SQL text.
 func (h TracingHook) AfterBuild(ctx context.Context, result chizuql.BuildResult) error {
 	tracer := h.tracer()
-	ctx, span := tracer.Start(ctx, h.spanName(), trace.WithSpanKind(trace.SpanKindInternal))
+	spanStartedAt := time.Now().Add(-result.Report.RenderDuration)
+	_, span := tracer.Start(
+		ctx,
+		h.spanName(),
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithTimestamp(spanStartedAt),
+	)
 	attrs := []attribute.KeyValue{
 		attribute.String("db.system", string(result.Report.DialectKind)),
 		attribute.Int("db.sql.parameters", result.Report.ArgsCount),
@@ -57,9 +64,7 @@ func (h TracingHook) AfterBuild(ctx context.Context, result chizuql.BuildResult)
 	}
 
 	span.SetAttributes(attrs...)
-	span.End()
-
-	_ = ctx
+	span.End(trace.WithTimestamp(spanStartedAt.Add(result.Report.RenderDuration)))
 
 	return nil
 }

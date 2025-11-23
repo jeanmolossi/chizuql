@@ -60,4 +60,11 @@ func TestTracingHookCreatesSpan(t *testing.T) {
 	if !foundStatement {
 		t.Fatalf("expected db.statement attribute")
 	}
+
+	expectedDuration := result.Report.RenderDuration
+	actualDuration := span.EndTime().Sub(span.StartTime())
+
+	if actualDuration != expectedDuration {
+		t.Fatalf("span duration mismatch: got %s, want %s", actualDuration, expectedDuration)
+	}
 }
