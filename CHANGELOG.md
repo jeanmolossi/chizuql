@@ -11,9 +11,10 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 - Instruções do `AGENTS.md` reforçadas para evitar downgrade das versões das actions utilizadas nas pipelines de CI.
+- `AGENTS.md` agora orienta que qualquer alteração em `.golangci.yml` siga o schema oficial do `golangci-lint`.
 
 ### Fixed
-- Configuração do `.golangci.yml` ajustada para seguir o schema do `wsl_v5` e da seção `issues`.
+- Configuração do `.golangci.yml` realinhada com o schema oficial, mantendo `wsl_v5` e `issues` com propriedades válidas.
 
 ## [v0.5.0] - 2025-11-23
 

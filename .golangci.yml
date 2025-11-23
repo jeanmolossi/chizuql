@@ -13,16 +13,18 @@ linters:
     - gocyclo
     - whitespace
     - tagalign
-linters-settings:
-  gocyclo:
-    min-complexity: 20
-  dupl:
-    threshold: 200
-  wsl_v5:
-    allow-first-in-block: true
-    allow-whole-block: false
-  gosec:
-    excludes:
-      - G115
+  settings:
+    gocyclo:
+      min-complexity: 20
+    dupl:
+      threshold: 200
+    wsl_v5:
+      allow-cuddle-declarations: true
+      allow-assign-and-call: true
+      allow-multiline-assign: true
+      allow-separated-leading-comment: true
+    gosec:
+      excludes:
+        - G115
 issues:
   exclude-use-default: false
