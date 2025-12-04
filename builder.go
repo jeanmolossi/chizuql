@@ -23,6 +23,11 @@ type Dialect interface {
 	placeholder(int) string
 }
 
+type insertDialect interface {
+	writeInsertKeyword(sql *strings.Builder, insertIgnore bool)
+	insertIgnoreUsesOnConflict(insertIgnore bool) bool
+}
+
 type dialectKind string
 
 const (
@@ -99,6 +104,24 @@ type sqlDialect struct {
 	kind dialectKind
 }
 
+func (d sqlDialect) writeInsertKeyword(sql *strings.Builder, insertIgnore bool) {
+	keyword := "INSERT "
+
+	if insertIgnore && d.kind == dialectMySQL {
+		keyword = "INSERT IGNORE "
+	}
+
+	sql.WriteString(keyword)
+}
+
+func (d sqlDialect) insertIgnoreUsesOnConflict(insertIgnore bool) bool {
+	if !insertIgnore {
+		return false
+	}
+
+	return d.kind == dialectPostgres || d.kind == dialectSQLite
+}
+
 func (d sqlDialect) Kind() dialectKind {
 	return d.kind
 }
@@ -122,6 +145,51 @@ func dialectKindOf(d Dialect) (dialectKind, bool) {
 	}
 
 	return "", false
+}
+
+type dialectCapabilities struct {
+	insert insertDialect
+}
+
+func newDialectCapabilities(d Dialect) dialectCapabilities {
+	return dialectCapabilities{insert: resolveInsertDialect(d)}
+}
+
+func resolveInsertDialect(d Dialect) insertDialect {
+	if insert, ok := d.(insertDialect); ok {
+		return insert
+	}
+
+	return defaultInsertDialect{dialect: d}
+}
+
+type defaultInsertDialect struct {
+	dialect Dialect
+}
+
+func (d defaultInsertDialect) writeInsertKeyword(sql *strings.Builder, insertIgnore bool) {
+	keyword := "INSERT "
+
+	if insertIgnore {
+		if kind, ok := dialectKindOf(d.dialect); ok && kind == dialectMySQL {
+			keyword = "INSERT IGNORE "
+		}
+	}
+
+	sql.WriteString(keyword)
+}
+
+func (d defaultInsertDialect) insertIgnoreUsesOnConflict(insertIgnore bool) bool {
+	if !insertIgnore {
+		return false
+	}
+
+	kind, ok := dialectKindOf(d.dialect)
+	if !ok {
+		return false
+	}
+
+	return kind == dialectPostgres || kind == dialectSQLite
 }
 
 var (
@@ -693,7 +761,8 @@ func (q *Query) buildWithContext(ctx context.Context) (BuildResult, error) {
 		dialect = DefaultDialect()
 	}
 
-	buildCtx := &buildContext{dialect: dialect, mysqlReturning: q.mysqlReturningMode}
+	capabilities := newDialectCapabilities(dialect)
+	buildCtx := &buildContext{dialect: dialect, insertDialect: capabilities.insert, mysqlReturning: q.mysqlReturningMode}
 	start := time.Now()
 	sql := strings.TrimSpace(q.render(buildCtx))
 	report := BuildReport{
@@ -972,18 +1041,16 @@ func (q *Query) ensureLockable() {
 }
 
 func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
-	dialectKind, hasDialect := dialectKindOf(ctx.dialect)
+	insertDialect := ctx.insertDialect
+	if insertDialect == nil {
+		insertDialect = defaultInsertDialect{dialect: ctx.dialect}
+	}
 
 	if q.insertIgnore && (len(q.onConflictSet) > 0 || q.onConflictDoNothing) {
 		panic("INSERT IGNORE não pode ser combinado com handlers explícitos de conflito")
 	}
 
-	insertKeyword := "INSERT "
-	if q.insertIgnore && hasDialect && dialectKind == dialectMySQL {
-		insertKeyword = "INSERT IGNORE "
-	}
-
-	sql.WriteString(insertKeyword)
+	insertDialect.writeInsertKeyword(sql, q.insertIgnore)
 
 	q.writeOptimizerHints(sql, ctx)
 
@@ -1012,7 +1079,7 @@ func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
 		sql.WriteString(strings.Join(valueRows, ", "))
 	}
 
-	if q.insertIgnore && hasDialect && (dialectKind == dialectPostgres || dialectKind == dialectSQLite) {
+	if insertDialect.insertIgnoreUsesOnConflict(q.insertIgnore) {
 		sql.WriteString(" ON CONFLICT DO NOTHING")
 		q.writeReturning(sql, ctx)
 
@@ -1170,6 +1237,7 @@ func (s SetClause) build(ctx *buildContext) string {
 type buildContext struct {
 	args             []any
 	dialect          Dialect
+	insertDialect    insertDialect
 	placeholderIndex int
 	subqueryAlias    int
 	subqueryAliases  map[*Query]string
