@@ -28,6 +28,7 @@ type dialectKind string
 const (
 	dialectMySQL    dialectKind = "mysql"
 	dialectPostgres dialectKind = "postgres"
+	dialectSQLite   dialectKind = "sqlite"
 )
 
 // MySQLReturningMode configures how RETURNING behaves for MySQL builds.
@@ -128,6 +129,8 @@ var (
 	DialectMySQL Dialect = sqlDialect{kind: dialectMySQL}
 	// DialectPostgres renders placeholders as $1, $2, ...
 	DialectPostgres Dialect = sqlDialect{kind: dialectPostgres}
+	// DialectSQLite renders placeholders as ? (SQLite-style)
+	DialectSQLite Dialect = sqlDialect{kind: dialectSQLite}
 
 	defaultDialect   Dialect = DialectMySQL
 	defaultDialectMu sync.RWMutex
@@ -175,6 +178,7 @@ type Query struct {
 	dialect Dialect
 
 	mysqlReturningMode MySQLReturningMode
+	insertIgnore       bool
 
 	rawSQL  string
 	rawArgs []any
@@ -363,6 +367,16 @@ func (q *Query) InsertInto(table any, columns ...string) *Query {
 	q.qType = queryTypeInsert
 	q.insertTable = toTableExpression(table)
 	q.insertCols = append(q.insertCols, columns...)
+
+	return q
+}
+
+// InsertIgnore marks the INSERT to ignore conflicts according to the configured dialect.
+//
+// MySQL renders `INSERT IGNORE`, while PostgreSQL and SQLite map to `ON CONFLICT DO NOTHING`.
+func (q *Query) InsertIgnore() *Query {
+	q.qType = queryTypeInsert
+	q.insertIgnore = true
 
 	return q
 }
@@ -958,7 +972,18 @@ func (q *Query) ensureLockable() {
 }
 
 func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
-	sql.WriteString("INSERT ")
+	dialectKind, hasDialect := dialectKindOf(ctx.dialect)
+
+	if q.insertIgnore && (len(q.onConflictSet) > 0 || q.onConflictDoNothing) {
+		panic("INSERT IGNORE não pode ser combinado com handlers explícitos de conflito")
+	}
+
+	insertKeyword := "INSERT "
+	if q.insertIgnore && hasDialect && dialectKind == dialectMySQL {
+		insertKeyword = "INSERT IGNORE "
+	}
+
+	sql.WriteString(insertKeyword)
 
 	q.writeOptimizerHints(sql, ctx)
 
@@ -985,6 +1010,13 @@ func (q *Query) buildInsert(sql *strings.Builder, ctx *buildContext) {
 	if len(valueRows) > 0 {
 		sql.WriteString(" VALUES ")
 		sql.WriteString(strings.Join(valueRows, ", "))
+	}
+
+	if q.insertIgnore && hasDialect && (dialectKind == dialectPostgres || dialectKind == dialectSQLite) {
+		sql.WriteString(" ON CONFLICT DO NOTHING")
+		q.writeReturning(sql, ctx)
+
+		return
 	}
 
 	q.writeOnConflict(sql, ctx)

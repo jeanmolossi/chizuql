@@ -754,6 +754,55 @@ func TestOnConflictDoNothingPostgres(t *testing.T) {
 	)
 }
 
+func TestInsertIgnoreMySQL(t *testing.T) {
+	q := New().
+		InsertInto("users", "email").
+		Values("a@example.com").
+		InsertIgnore()
+
+	assertBuild(t, q,
+		"INSERT IGNORE INTO users (email) VALUES (?)",
+		[]any{"a@example.com"},
+	)
+}
+
+func TestInsertIgnorePostgres(t *testing.T) {
+	q := New().
+		WithDialect(DialectPostgres).
+		InsertInto("users", "email").
+		Values("a@example.com").
+		InsertIgnore().
+		Returning("id")
+
+	assertBuild(t, q,
+		"INSERT INTO users (email) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id",
+		[]any{"a@example.com"},
+	)
+}
+
+func TestInsertIgnoreSQLite(t *testing.T) {
+	q := New().
+		WithDialect(DialectSQLite).
+		InsertInto("users", "email").
+		Values("a@example.com").
+		InsertIgnore()
+
+	assertBuild(t, q,
+		"INSERT INTO users (email) VALUES (?) ON CONFLICT DO NOTHING",
+		[]any{"a@example.com"},
+	)
+}
+
+func TestInsertIgnoreWithExplicitConflictPanics(t *testing.T) {
+	assertPanicsWith(t, func() {
+		New().
+			InsertInto("users", "email").
+			InsertIgnore().
+			OnConflictDoUpdate([]string{"email"}, Set("name", Raw("EXCLUDED.name"))).
+			Build()
+	}, "INSERT IGNORE não pode ser combinado com handlers explícitos de conflito")
+}
+
 func TestJSONHelpers(t *testing.T) {
 	mysql := New().
 		Select(

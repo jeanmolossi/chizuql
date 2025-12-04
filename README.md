@@ -8,6 +8,12 @@ ChizuQL é um query builder fluente para Go. Ele permite montar SQL parametrizad
 go get github.com/jeanmolossi/chizuql
 ```
 
+## Dialetos suportados
+
+- **MySQL** (padrão) com placeholders `?` e suporte a `INSERT IGNORE`.
+- **PostgreSQL**, habilitado via `WithDialect(chizuql.DialectPostgres)` com placeholders numerados (`$1`, `$2`...).
+- **SQLite**, habilitado via `WithDialect(chizuql.DialectSQLite)`, reutilizando placeholders `?` e suportando `ON CONFLICT`.
+
 ## Uso rápido
 
 ### SELECT básico
@@ -59,6 +65,30 @@ insert := chizuql.New().
 
 sql, args := insert.Build()
 ```
+
+### INSERT ignorando conflitos conforme o dialeto
+```go
+mysql := chizuql.New().
+    InsertInto("users", "email").
+    Values("a@example.com").
+    InsertIgnore()
+
+sqlite := chizuql.New().
+    WithDialect(chizuql.DialectSQLite).
+    InsertInto("users", "email").
+    Values("a@example.com").
+    InsertIgnore()
+
+postgres := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    InsertInto("users", "email").
+    Values("a@example.com").
+    InsertIgnore().
+    Returning("id")
+```
+
+- MySQL gera `INSERT IGNORE`, mantendo compatibilidade com `RETURNING` quando permitido pelo servidor.
+- PostgreSQL e SQLite traduzem para `ON CONFLICT DO NOTHING`, permitindo encadear `RETURNING` normalmente.
 
 ### DELETE com CTE
 ```go
