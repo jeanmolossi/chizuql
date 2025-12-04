@@ -753,6 +753,10 @@ func (q *Query) buildWithContext(ctx context.Context) (BuildResult, error) {
 		return BuildResult{}, err
 	}
 
+	if q.qType == queryTypeInsert && q.insertTable == nil {
+		return BuildResult{}, fmt.Errorf("InsertInto must be called before InsertIgnore/Build for INSERT queries")
+	}
+
 	hooks := q.collectHooks()
 	runBeforeHooks(ctx, hooks, q)
 

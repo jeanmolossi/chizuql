@@ -12,7 +12,7 @@ All notable changes to this project will be documented in this file. The format 
 - Nothing yet.
 
 ### Fixed
-- Nothing yet.
+- Validação para evitar panics ao construir INSERT sem `InsertInto`, retornando erro descritivo quando `InsertIgnore` é usado sem definir a tabela.
 
 ## [v0.6.0] - 2025-11-23
 

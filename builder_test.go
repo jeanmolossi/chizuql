@@ -803,6 +803,23 @@ func TestInsertIgnoreWithExplicitConflictPanics(t *testing.T) {
 	}, "INSERT IGNORE não pode ser combinado com handlers explícitos de conflito")
 }
 
+func TestInsertIgnoreWithoutTableReturnsError(t *testing.T) {
+	q := New().
+		InsertIgnore().
+		Values("a@example.com")
+
+	_, _, err := q.BuildContext(context.Background())
+	if err == nil {
+		t.Fatalf("expected validation error, got nil")
+	}
+
+	const want = "InsertInto must be called before InsertIgnore/Build for INSERT queries"
+
+	if err.Error() != want {
+		t.Fatalf("unexpected error.\nwant: %s\n got: %v", want, err)
+	}
+}
+
 func TestJSONHelpers(t *testing.T) {
 	mysql := New().
 		Select(
