@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
+- Nothing yet.
+
+### Changed
+- Nothing yet.
+
+### Fixed
+- Nothing yet.
+
+## [v0.7.0] - 2025-11-24
+
+### Added
 - Dialeto SQLite com placeholders `?` e suporte a `ON CONFLICT` para inserções e retornos de conflito.
 - Método `InsertIgnore` adaptado por dialeto (`INSERT IGNORE` no MySQL e `ON CONFLICT DO NOTHING` em PostgreSQL/SQLite), com exemplos e documentação atualizados.
 
