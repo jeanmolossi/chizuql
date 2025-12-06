@@ -156,6 +156,47 @@ args: ["Jane" "jane@example.com" "John" "john@example.com"]
 - O `RETURNING` funciona para INSERT/UPDATE/DELETE, mas é rejeitado em SELECT.
 - O builder aceita quantas linhas `Values` forem necessárias.
 
+### 5.1 INSERT ignorando conflitos por dialeto
+**Query**
+```go
+mysql := chizuql.New().
+    InsertInto("users", "email").
+    Values("a@example.com").
+    InsertIgnore()
+
+postgres := chizuql.New().
+    WithDialect(chizuql.DialectPostgres).
+    InsertInto("users", "email").
+    Values("a@example.com").
+    InsertIgnore().
+    Returning("id")
+
+sqlite := chizuql.New().
+    WithDialect(chizuql.DialectSQLite).
+    InsertInto("users", "email").
+    Values("a@example.com").
+    InsertIgnore()
+```
+
+**Saída gerada**
+```sql
+-- MySQL (default)
+INSERT IGNORE INTO users (email) VALUES (?)
+args: ["a@example.com"]
+
+-- PostgreSQL
+INSERT INTO users (email) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id
+args: ["a@example.com"]
+
+-- SQLite
+INSERT INTO users (email) VALUES (?) ON CONFLICT DO NOTHING
+args: ["a@example.com"]
+```
+
+**Comentários**
+- `InsertIgnore` adapta a sintaxe: `INSERT IGNORE` em MySQL e `ON CONFLICT DO NOTHING` em PostgreSQL/SQLite.
+- O encadeamento de `Returning` continua válido para dialetos que o suportam.
+
 ### 6. UPSERT PostgreSQL com `ON CONFLICT DO UPDATE`
 **Query**
 ```go
