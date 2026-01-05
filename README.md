@@ -199,7 +199,7 @@ q := chizuql.New().
 sql, args := q.Build()
 ```
 
-### Filtro com NOT IN + CastAsAny (com OR)
+### Filtro com NOT IN + CastAsAny (usando Or)
 ```go
 skipIDs := []int64{12, 15}
 
@@ -207,12 +207,14 @@ q := chizuql.New().
     Select("doc_id", "doc_date").
     From("doc_update_queue").
     Where(
-        chizuql.Col("doc_date").Gt("2025-01-01"),
-        chizuql.Col("doc_id").NotIn(chizuql.CastAsAny(skipIDs)...),
-    ).
-    WhereOr(
-        chizuql.Col("doc_id").In(101, 102),
-        chizuql.Col("priority").Gt(10),
+        chizuql.Or(
+            chizuql.And(
+                chizuql.Col("doc_date").Gt("2025-01-01"),
+                chizuql.Col("doc_id").NotIn(chizuql.CastAsAny(skipIDs)...),
+            ),
+            chizuql.Col("doc_id").In(101, 102),
+            chizuql.Col("priority").Gt(10),
+        ),
     ).
     OrderBy("doc_id ASC")
 
@@ -221,7 +223,7 @@ sql, args := q.Build()
 
 - `CastAsAny` converte slices tipados para `[]any`, facilitando chamadas variádicas.
 - `NotIn` aceita tanto listas de valores quanto subconsultas, reutilizando o comportamento de placeholders do `In`.
-- `WhereOr` adiciona blocos de predicados com `OR` sem perder o agrupamento aplicado pela cláusula `Where`.
+- `Or` permite combinar blocos completos de predicados dentro do `Where`, preservando o agrupamento desejado.
 
 ### Locks de linha com `FOR UPDATE`/`LOCK IN SHARE MODE`
 ```go
