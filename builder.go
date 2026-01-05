@@ -1478,6 +1478,20 @@ func toValueExpressions(values ...any) []Expression {
 	return out
 }
 
+// CastAsAny converts a typed slice into a []any to simplify usage with variadic helpers.
+func CastAsAny[T any](values []T) []any {
+	if values == nil {
+		return nil
+	}
+
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+
+	return out
+}
+
 func toSQLExpression(value any) Expression {
 	switch v := value.(type) {
 	case string:

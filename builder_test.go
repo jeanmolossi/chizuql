@@ -901,6 +901,35 @@ func TestEmptyInListPanics(t *testing.T) {
 	}, "IN list cannot be empty")
 }
 
+func TestNotInWithValues(t *testing.T) {
+	ids := []int{1, 2, 3}
+
+	q := New().
+		Select("id").
+		From("users").
+		Where(Col("id").NotIn(CastAsAny(ids)...))
+
+	assertBuild(t, q,
+		"SELECT id FROM users WHERE (id NOT IN (?, ?, ?))",
+		[]any{1, 2, 3},
+	)
+}
+
+func TestNotInWithSubquery(t *testing.T) {
+	q := New().
+		Select("id").
+		From("users").
+		Where(
+			Col("id").NotIn(New().Select("user_id").From("logs")),
+			Col("status").Eq("active"),
+		)
+
+	assertBuild(t, q,
+		"SELECT id FROM users WHERE (id NOT IN (SELECT user_id FROM logs) AND status = ?)",
+		[]any{"active"},
+	)
+}
+
 func assertPanicsWith(t *testing.T, fn func(), msg string) {
 	t.Helper()
 

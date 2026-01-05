@@ -199,6 +199,24 @@ q := chizuql.New().
 sql, args := q.Build()
 ```
 
+### Filtro com NOT IN + CastAsAny
+```go
+logIDs := []int{10, 11, 12}
+
+q := chizuql.New().
+    Select("v.vag_id").
+    From(chizuql.TableAlias("vag", "v")).
+    Where(
+        chizuql.Col("v.vag_id").NotIn(chizuql.CastAsAny(logIDs)...),
+        chizuql.Col("v.vag_id").Gt(100),
+    )
+
+sql, args := q.Build()
+```
+
+- `CastAsAny` converte slices tipados para `[]any`, facilitando chamadas variádicas.
+- `NotIn` aceita tanto listas de valores quanto subconsultas, reutilizando o comportamento de placeholders do `In`.
+
 ### Locks de linha com `FOR UPDATE`/`LOCK IN SHARE MODE`
 ```go
 lockShared := chizuql.New().

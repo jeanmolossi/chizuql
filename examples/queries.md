@@ -452,6 +452,32 @@ args: ["2024-01-01" "2024-02-01" "archived" "zzz"]
 - `Between` e `NotBetween` aceitam qualquer expressão, inclusive `Raw` ou subconsultas.
 - Vários predicados informados em `Where` continuam agrupados por `AND`.
 
+### 13.1 Filtro com NOT IN usando CastAsAny
+**Query**
+```go
+logIDs := []int{10, 11, 12}
+
+q := chizuql.New().
+    Select("v.vag_id").
+    From(chizuql.TableAlias("vag", "v")).
+    Where(
+        chizuql.Col("v.vag_id").NotIn(chizuql.CastAsAny(logIDs)...),
+        chizuql.Col("v.vag_id").Gt(100),
+    )
+
+sql, args := q.Build()
+```
+
+**Saída gerada**
+```
+SELECT v.vag_id FROM vag AS v WHERE (v.vag_id NOT IN (?, ?, ?) AND v.vag_id > ?)
+args: [10 11 12 100]
+```
+
+**Comentários**
+- `CastAsAny` converte slices tipados em `[]any`, facilitando o uso em chamadas variádicas como `In`/`NotIn`.
+- `NotIn` aceita tanto slices quanto subconsultas, mantendo o tratamento de placeholders por dialeto.
+
 ### 14. Agrupamentos avançados com GROUPING SETS e ROLLUP
 **Query**
 ```go
