@@ -224,6 +224,29 @@ func TestSelectQuery(t *testing.T) {
 	)
 }
 
+func TestWhereOr(t *testing.T) {
+	skipIDs := []int{3, 4}
+
+	q := New().
+		Select("doc_id", "doc_date").
+		From("doc_update_queue").
+		Where(
+			Col("doc_date").Gt("2025-01-01"),
+			Col("doc_id").NotIn(CastAsAny(skipIDs)...),
+		).
+		WhereOr(
+			Col("doc_id").In(101, 102),
+			Col("doc_id").In(New().Select("doc_id").From("urgent_docs")),
+			Col("priority").Gt(5),
+		).
+		OrderBy("doc_id ASC")
+
+	assertBuild(t, q,
+		"SELECT doc_id, doc_date FROM doc_update_queue WHERE ((doc_date > ? AND doc_id NOT IN (?, ?)) OR doc_id IN (?, ?) OR doc_id IN (SELECT doc_id FROM urgent_docs) OR priority > ?) ORDER BY doc_id ASC",
+		[]any{"2025-01-01", 3, 4, 101, 102, 5},
+	)
+}
+
 func TestJoinGroupHaving(t *testing.T) {
 	q := New().
 		Select("u.id", ColAlias("COUNT(p.id)", "post_count")).

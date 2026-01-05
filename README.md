@@ -199,23 +199,29 @@ q := chizuql.New().
 sql, args := q.Build()
 ```
 
-### Filtro com NOT IN + CastAsAny
+### Filtro com NOT IN + CastAsAny (com OR)
 ```go
-logIDs := []int{10, 11, 12}
+skipIDs := []int64{12, 15}
 
 q := chizuql.New().
-    Select("v.vag_id").
-    From(chizuql.TableAlias("vag", "v")).
+    Select("doc_id", "doc_date").
+    From("doc_update_queue").
     Where(
-        chizuql.Col("v.vag_id").NotIn(chizuql.CastAsAny(logIDs)...),
-        chizuql.Col("v.vag_id").Gt(100),
-    )
+        chizuql.Col("doc_date").Gt("2025-01-01"),
+        chizuql.Col("doc_id").NotIn(chizuql.CastAsAny(skipIDs)...),
+    ).
+    WhereOr(
+        chizuql.Col("doc_id").In(101, 102),
+        chizuql.Col("priority").Gt(10),
+    ).
+    OrderBy("doc_id ASC")
 
 sql, args := q.Build()
 ```
 
 - `CastAsAny` converte slices tipados para `[]any`, facilitando chamadas variádicas.
 - `NotIn` aceita tanto listas de valores quanto subconsultas, reutilizando o comportamento de placeholders do `In`.
+- `WhereOr` adiciona blocos de predicados com `OR` sem perder o agrupamento aplicado pela cláusula `Where`.
 
 ### Locks de linha com `FOR UPDATE`/`LOCK IN SHARE MODE`
 ```go

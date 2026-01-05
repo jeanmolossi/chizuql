@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file. The format 
 ### Added
 - Predicado `NotIn` para colunas, aceitando listas de valores ou subconsultas.
 - Helper `CastAsAny` para facilitar o uso de slices tipados em chamadas variádicas (`In`/`NotIn`) e exemplo correspondente em `examples/`.
+- Método `WhereOr` para combinar blocos de predicados com `OR` mantendo o agrupamento do `WHERE`.
 
 ### Changed
 - Nothing yet.

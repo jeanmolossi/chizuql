@@ -537,19 +537,41 @@ func (q *Query) join(kind string, table any, on ...Predicate) *Query {
 
 // Where appends predicates to the WHERE clause combined with AND.
 func (q *Query) Where(predicates ...Predicate) *Query {
-	if len(predicates) == 0 {
-		return q
-	}
-
-	if q.where == nil {
-		q.where = And(predicates...)
-
-		return q
-	}
-
-	q.where = And(q.where, And(predicates...))
+	q.appendWhere("AND", predicates...)
 
 	return q
+}
+
+// WhereOr appends predicates to the WHERE clause combined with OR.
+func (q *Query) WhereOr(predicates ...Predicate) *Query {
+	q.appendWhere("OR", predicates...)
+
+	return q
+}
+
+func (q *Query) appendWhere(op string, predicates ...Predicate) {
+	if len(predicates) == 0 {
+		return
+	}
+
+	group := combinePredicates(op, predicates...)
+	if q.where == nil {
+		q.where = group
+
+		return
+	}
+
+	if strings.ToUpper(op) == "OR" {
+		combined := make([]Predicate, 0, len(predicates)+1)
+		combined = append(combined, q.where)
+		combined = append(combined, predicates...)
+
+		q.where = Or(combined...)
+
+		return
+	}
+
+	q.where = And(q.where, group)
 }
 
 // Having appends predicates to the HAVING clause combined with AND.
@@ -1508,4 +1530,13 @@ func toSQLExpressions(values ...any) []Expression {
 	}
 
 	return out
+}
+
+func combinePredicates(op string, predicates ...Predicate) Predicate {
+	switch strings.ToUpper(op) {
+	case "OR":
+		return Or(predicates...)
+	default:
+		return And(predicates...)
+	}
 }
