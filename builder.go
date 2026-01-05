@@ -541,13 +541,23 @@ func (q *Query) Where(predicates ...Predicate) *Query {
 		return q
 	}
 
-	if q.where == nil {
-		q.where = And(predicates...)
+	combined := append(flattenAndPredicates(q.where), flattenAndPredicates(predicates...)...)
+
+	if len(combined) == 0 {
+		return q
+	}
+
+	if len(combined) == 1 {
+		if _, isCompound := combined[0].(compoundPredicate); isCompound {
+			q.where = combined[0]
+		} else {
+			q.where = compoundPredicate{op: "AND", parts: combined}
+		}
 
 		return q
 	}
 
-	q.where = And(q.where, And(predicates...))
+	q.where = compoundPredicate{op: "AND", parts: combined}
 
 	return q
 }
@@ -1478,6 +1488,20 @@ func toValueExpressions(values ...any) []Expression {
 	return out
 }
 
+// CastAsAny converts a typed slice into a []any to simplify usage with variadic helpers.
+func CastAsAny[T any](values []T) []any {
+	if values == nil {
+		return nil
+	}
+
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+
+	return out
+}
+
 func toSQLExpression(value any) Expression {
 	switch v := value.(type) {
 	case string:
@@ -1494,4 +1518,24 @@ func toSQLExpressions(values ...any) []Expression {
 	}
 
 	return out
+}
+
+func flattenAndPredicates(predicates ...Predicate) []Predicate {
+	flat := make([]Predicate, 0, len(predicates))
+
+	for _, pred := range predicates {
+		if pred == nil {
+			continue
+		}
+
+		if cp, ok := pred.(compoundPredicate); ok && strings.ToUpper(cp.op) == "AND" {
+			flat = append(flat, flattenAndPredicates(cp.parts...)...)
+
+			continue
+		}
+
+		flat = append(flat, pred)
+	}
+
+	return flat
 }

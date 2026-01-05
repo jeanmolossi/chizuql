@@ -224,6 +224,31 @@ func TestSelectQuery(t *testing.T) {
 	)
 }
 
+func TestWhereWithOr(t *testing.T) {
+	skipIDs := []int{3, 4}
+
+	q := New().
+		Select("doc_id", "doc_date").
+		From("doc_update_queue").
+		Where(
+			Or(
+				And(
+					Col("doc_date").Gt("2025-01-01"),
+					Col("doc_id").NotIn(CastAsAny(skipIDs)...),
+				),
+				Col("doc_id").In(101, 102),
+				Col("doc_id").In(New().Select("doc_id").From("urgent_docs")),
+				Col("priority").Gt(5),
+			),
+		).
+		OrderBy("doc_id ASC")
+
+	assertBuild(t, q,
+		"SELECT doc_id, doc_date FROM doc_update_queue WHERE ((doc_date > ? AND doc_id NOT IN (?, ?)) OR doc_id IN (?, ?) OR doc_id IN (SELECT doc_id FROM urgent_docs) OR priority > ?) ORDER BY doc_id ASC",
+		[]any{"2025-01-01", 3, 4, 101, 102, 5},
+	)
+}
+
 func TestJoinGroupHaving(t *testing.T) {
 	q := New().
 		Select("u.id", ColAlias("COUNT(p.id)", "post_count")).
@@ -664,7 +689,7 @@ func TestKeysetPaginationHelpers(t *testing.T) {
 		Limit(20)
 
 	assertBuild(t, q,
-		"SELECT id, created_at FROM posts WHERE (((id > ?) OR (id = ? AND created_at < ?))) ORDER BY id ASC, created_at DESC LIMIT 20",
+		"SELECT id, created_at FROM posts WHERE ((id > ?) OR (id = ? AND created_at < ?)) ORDER BY id ASC, created_at DESC LIMIT 20",
 		[]any{10, 10, "2024-01-01 00:00:00"},
 	)
 
@@ -675,7 +700,7 @@ func TestKeysetPaginationHelpers(t *testing.T) {
 		KeysetBefore(95.5, 50)
 
 	assertBuild(t, prev,
-		"SELECT score, id FROM rankings WHERE (((score > ?) OR (score = ? AND id < ?))) ORDER BY score DESC, id ASC",
+		"SELECT score, id FROM rankings WHERE ((score > ?) OR (score = ? AND id < ?)) ORDER BY score DESC, id ASC",
 		[]any{95.5, 95.5, 50},
 	)
 }
@@ -689,7 +714,7 @@ func TestKeysetPaginationWithRawOrderings(t *testing.T) {
 		Limit(10)
 
 	assertBuild(t, next,
-		"SELECT id, created_at FROM posts WHERE (((id < ?) OR (id = ? AND created_at > ?))) ORDER BY id DESC, created_at ASC LIMIT 10",
+		"SELECT id, created_at FROM posts WHERE ((id < ?) OR (id = ? AND created_at > ?)) ORDER BY id DESC, created_at ASC LIMIT 10",
 		[]any{100, 100, "2024-12-31 23:59:59"},
 	)
 
@@ -700,7 +725,7 @@ func TestKeysetPaginationWithRawOrderings(t *testing.T) {
 		KeysetBefore(42)
 
 	assertBuild(t, prev,
-		"SELECT id FROM posts WHERE (((id > ?))) ORDER BY id DESC",
+		"SELECT id FROM posts WHERE ((id > ?)) ORDER BY id DESC",
 		[]any{42},
 	)
 }
@@ -899,6 +924,35 @@ func TestEmptyInListPanics(t *testing.T) {
 	assertPanicsWith(t, func() {
 		inPredicate{left: Col("id"), list: nil}.build(&buildContext{dialect: DialectMySQL})
 	}, "IN list cannot be empty")
+}
+
+func TestNotInWithValues(t *testing.T) {
+	ids := []int{1, 2, 3}
+
+	q := New().
+		Select("id").
+		From("users").
+		Where(Col("id").NotIn(CastAsAny(ids)...))
+
+	assertBuild(t, q,
+		"SELECT id FROM users WHERE (id NOT IN (?, ?, ?))",
+		[]any{1, 2, 3},
+	)
+}
+
+func TestNotInWithSubquery(t *testing.T) {
+	q := New().
+		Select("id").
+		From("users").
+		Where(
+			Col("id").NotIn(New().Select("user_id").From("logs")),
+			Col("status").Eq("active"),
+		)
+
+	assertBuild(t, q,
+		"SELECT id FROM users WHERE (id NOT IN (SELECT user_id FROM logs) AND status = ?)",
+		[]any{"active"},
+	)
 }
 
 func assertPanicsWith(t *testing.T, fn func(), msg string) {

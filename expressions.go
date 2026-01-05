@@ -97,19 +97,36 @@ func (c Column) Lte(value any) Predicate {
 
 // In builds an IN predicate. Values can be literals or a subquery.
 func (c Column) In(values ...any) Predicate {
+	return c.buildInPredicate(false, values...)
+}
+
+// NotIn builds a NOT IN predicate. Values can be literals or a subquery.
+func (c Column) NotIn(values ...any) Predicate {
+	return c.buildInPredicate(true, values...)
+}
+
+func (c Column) buildInPredicate(negate bool, values ...any) Predicate {
 	if len(values) == 0 {
 		panic("IN list cannot be empty")
 	}
 
 	if len(values) == 1 {
-		if sub, ok := values[0].(*Query); ok {
-			return comparison{left: c, op: "IN", right: subqueryExpr{query: sub}}
+		op := "IN"
+		if negate {
+			op = "NOT IN"
+		}
+
+		switch sub := values[0].(type) {
+		case *Query:
+			return comparison{left: c, op: op, right: subqueryExpr{query: sub}}
+		case Query:
+			return comparison{left: c, op: op, right: subqueryExpr{query: &sub}}
 		}
 	}
 
 	exprs := toValueExpressions(values...)
 
-	return inPredicate{left: c, list: exprs}
+	return inPredicate{left: c, list: exprs, negate: negate}
 }
 
 // Between builds a BETWEEN predicate.
@@ -190,8 +207,9 @@ func (c comparison) build(ctx *buildContext) string {
 
 // inPredicate represents an IN predicate.
 type inPredicate struct {
-	left Expression
-	list []Expression
+	left   Expression
+	list   []Expression
+	negate bool
 }
 
 func (i inPredicate) build(ctx *buildContext) string {
@@ -204,7 +222,12 @@ func (i inPredicate) build(ctx *buildContext) string {
 		parts = append(parts, item.build(ctx))
 	}
 
-	return fmt.Sprintf("%s IN (%s)", i.left.build(ctx), strings.Join(parts, ", "))
+	op := "IN"
+	if i.negate {
+		op = "NOT IN"
+	}
+
+	return fmt.Sprintf("%s %s (%s)", i.left.build(ctx), op, strings.Join(parts, ", "))
 }
 
 // betweenPredicate represents a BETWEEN predicate.

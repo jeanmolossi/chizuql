@@ -13,6 +13,19 @@ All notable changes to this project will be documented in this file. The format 
 ### Fixed
 - Nothing yet.
 
+## [v0.8.0] - 2025-11-25
+
+### Added
+- Predicado `NotIn` para colunas, aceitando listas de valores ou subconsultas.
+- Helper `CastAsAny` para facilitar o uso de slices tipados em chamadas variádicas (`In`/`NotIn`) e exemplo correspondente em `examples/`.
+- Documentação de composição de `WHERE` usando `Or` para evitar aninhamentos desnecessários.
+
+### Changed
+- Nothing yet.
+
+### Fixed
+- Nothing yet.
+
 ## [v0.7.0] - 2025-11-24
 
 ### Added

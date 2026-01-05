@@ -452,6 +452,39 @@ args: ["2024-01-01" "2024-02-01" "archived" "zzz"]
 - `Between` e `NotBetween` aceitam qualquer expressão, inclusive `Raw` ou subconsultas.
 - Vários predicados informados em `Where` continuam agrupados por `AND`.
 
+### 13.1 Filtro com NOT IN usando CastAsAny e Or
+**Query**
+```go
+skipIDs := []int64{12, 15}
+
+q := chizuql.New().
+    Select("doc_id", "doc_date").
+    From("doc_update_queue").
+    Where(
+        chizuql.Or(
+            chizuql.And(
+                chizuql.Col("doc_date").Gt("2025-01-01"),
+                chizuql.Col("doc_id").NotIn(chizuql.CastAsAny(skipIDs)...),
+            ),
+            chizuql.Col("doc_id").In(101, 102),
+            chizuql.Col("priority").Gt(10),
+        ),
+    ).
+    OrderBy("doc_id ASC")
+
+sql, args := q.Build()
+```
+
+**Saída gerada**
+```
+SELECT doc_id, doc_date FROM doc_update_queue WHERE ((doc_date > ? AND doc_id NOT IN (?, ?)) OR doc_id IN (?, ?) OR priority > ?) ORDER BY doc_id ASC
+args: ["2025-01-01" 12 15 101 102 10]
+```
+
+**Comentários**
+- `CastAsAny` converte slices tipados em `[]any`, facilitando o uso em chamadas variádicas como `In`/`NotIn`.
+- `Or` permite adicionar blocos extras com `OR` preservando o agrupamento do `Where` inicial.
+
 ### 14. Agrupamentos avançados com GROUPING SETS e ROLLUP
 **Query**
 ```go
